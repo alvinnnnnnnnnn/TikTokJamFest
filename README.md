@@ -10,7 +10,35 @@ Design and implement an ML-based system to evaluate the quality and relevancy of
 
 ---
 
+## API Contract
+
+### Batch Classification Endpoint
+
+**POST /classify_batch**
+
+Request:
+```json
+{"texts": ["review 1", "review 2", "..."]}
+```
+
+Response: **200 OK**
+```json
+[
+  {
+    "label": "ad",                       // one of: valid|ad|irrelevant|rant
+    "scores": {"ad": 0.91, "valid": 0.05, "irrelevant": 0.03, "rant": 0.01},
+    "violations": ["No Advertisement"],  // zero or more strings
+    "spans": [["promo", 10, 25], ["url", 40, 60]]   // optional highlights (type, start, end)
+  }
+]
+```
+
+**Note:** If HTTP endpoint is unavailable, a local Python function will be used with the same return shape.
+
+---
+
 ## Table of Contents
+- [API Contract](#api-contract)
 - [Quick Start](#quick-start)
 - [Datasets Used](#datasets-used)
 - [Solution](#solution)
@@ -53,3 +81,63 @@ To evaluate the model's performance based on our use case, the following weighte
 
 
 ## Member Contributions
+
+# Review Cleaner
+
+A Streamlit web app for cleaning and classifying Google reviews.
+
+## Features
+
+- Upload CSV files containing Google reviews
+- Automatic classification (valid | ad | irrelevant | rant)
+- Before vs After review comparison
+- Text highlighting for URLs, promotional content, and suspicious phrases
+- Confidence scores and badges
+- Metrics dashboard
+- Export cleaned datasets
+
+## Installation
+
+```bash
+pip install -r requirements.txt
+```
+
+## Usage
+
+```bash
+streamlit run app.py
+```
+
+## File Structure
+
+```
+review-cleaner/
+├── app.py                  # Main Streamlit application
+├── models/
+│   ├── __init__.py
+│   └── local_infer.py      # Review classification logic
+├── utils/
+│   ├── __init__.py
+│   ├── highlight.py        # Text highlighting utilities
+│   └── schema.py           # Data validation schemas
+├── assets/
+│   └── sample_reviews.csv  # Sample data for testing
+├── requirements.txt        # Python dependencies
+└── README.md              # This file
+```
+
+## CSV Format
+
+Your input CSV should contain these columns:
+- `review_id`: Unique identifier
+- `review_text`: The review content
+- `rating`: Star rating (1-5)
+- `user`: Username/reviewer
+- `timestamp`: Review date/time
+
+## Deployment
+
+This app can be deployed to:
+- Streamlit Cloud
+- Hugging Face Spaces
+- Any platform supporting Streamlit apps
