@@ -12,7 +12,7 @@ def main():
         layout="wide"
     )
     st.title("🧹 Before → After: Trustworthy Review Feed")
-    st.subtitle("Clean and classify Google reviews with confidence")
+    st.subheader("Clean and classify Google reviews with confidence")
     
     # Sidebar controls
     with st.sidebar:
@@ -147,12 +147,19 @@ def main():
                 else:
                     filtered_df = df
                 
-                # Two columns layout
+                # Column headers
                 col1, col2 = st.columns(2)
-                
                 with col1:
                     st.subheader("🔍 Raw Reviews")
-                    for idx, row in filtered_df.iterrows():
+                with col2:
+                    st.subheader("✨ Processed Reviews")
+                
+                # Process reviews in aligned pairs
+                for idx, row in filtered_df.iterrows():
+                    col1, col2 = st.columns(2)
+                    
+                    # Left column - Raw review
+                    with col1:
                         with st.container():
                             # Basic metadata
                             meta_cols = st.columns([1, 1, 2])
@@ -165,11 +172,9 @@ def main():
                             
                             # Raw text
                             st.write(row['review_text'])
-                            st.divider()
-                
-                with col2:
-                    st.subheader("✨ Processed Reviews")
-                    for idx, row in filtered_df.iterrows():
+                    
+                    # Right column - Processed review  
+                    with col2:
                         with st.container():
                             # Badge and confidence
                             badge_col, conf_col = st.columns([1, 2])
@@ -196,8 +201,9 @@ def main():
                             sorted_scores = sorted(row['scores'].items(), key=lambda x: x[1], reverse=True)
                             scores_text = " | ".join([f"{k}: {v:.2f}" for k, v in sorted_scores])
                             st.caption(f"Scores: {scores_text}")
-                            
-                            st.divider()
+                    
+                    # Add divider after each pair
+                    st.divider()
             
             with tab2:
                 st.header("📊 Classification Metrics")
@@ -226,7 +232,7 @@ def main():
                 breakdown_df = df['label'].value_counts().reset_index()
                 breakdown_df.columns = ['Label', 'Count']
                 breakdown_df['Percentage'] = (breakdown_df['Count'] / len(df) * 100).round(1)
-                st.dataframe(breakdown_df, use_container_width=True)
+                st.dataframe(breakdown_df, width='stretch')
             
             with tab3:
                 st.header("💾 Export Clean Dataset")
@@ -248,7 +254,7 @@ def main():
                 export_df = clean_df[export_columns]
                 
                 st.write(f"**Clean dataset contains {len(export_df)} valid reviews**")
-                st.dataframe(export_df.head(), use_container_width=True)
+                st.dataframe(export_df.head(), width='stretch')
                 
                 # Download button
                 csv_data = export_df.to_csv(index=False)
@@ -279,7 +285,7 @@ def main():
             'user': ['Alice', 'PromoBot', 'Reviewer'],
             'timestamp': ['2024-01-01', '2024-01-02', '2024-01-03']
         })
-        st.dataframe(sample_df, use_container_width=True)
+        st.dataframe(sample_df, width='stretch')
 
 if __name__ == "__main__":
     main()
