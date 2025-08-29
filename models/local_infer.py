@@ -1,6 +1,7 @@
 import random
 import re
 from typing import Dict, List, Tuple
+from utils.highlight import default_spans
 
 class ReviewClassifier:
     """Local classifier matching API contract format"""
@@ -102,3 +103,49 @@ class ReviewClassifier:
     def classify_batch(self, texts: List[str]) -> List[Dict]:
         """Classify multiple reviews matching API contract"""
         return [self.classify_review(text) for text in texts]
+
+def infer_batch(texts: List[str]) -> List[Dict]:
+    """
+    Rule-based baseline classifier for testing.
+    Returns list of classification results matching API contract.
+    """
+    results = []
+    
+    for text in texts:
+        # Get spans using the utility function
+        spans = default_spans(text)
+        
+        # Rule-based classification
+        has_url = any(span[0] == "url" for span in spans)
+        has_promo = any(span[0] == "promo" for span in spans)
+        has_novisit = any(span[0] == "novisit" for span in spans)
+        
+        if has_url or has_promo:
+            # Classify as ad
+            label = "ad"
+            scores = {"ad": 0.9, "valid": 0.05, "irrelevant": 0.03, "rant": 0.02}
+            violations = ["No Advertisement"]
+            
+        elif has_novisit:
+            # Classify as rant (per specification)
+            label = "rant"  
+            scores = {"rant": 0.85, "valid": 0.08, "irrelevant": 0.05, "ad": 0.02}
+            violations = ["No Rant Without Visit"]
+            
+        else:
+            # Valid review
+            label = "valid"
+            scores = {"valid": 0.88, "ad": 0.05, "irrelevant": 0.04, "rant": 0.03}
+            violations = []
+        
+        # Convert spans from (type, start, end) to [type, start, end] format
+        formatted_spans = [[span[0], span[1], span[2]] for span in spans]
+        
+        results.append({
+            "label": label,
+            "scores": scores,
+            "violations": violations,
+            "spans": formatted_spans
+        })
+    
+    return results
