@@ -28,85 +28,55 @@ def main():
     # Load Google API key from environment
     google_api_key = os.getenv("GOOGLE_PLACES_API_KEY")
     
-    # Top-level mode selection
-    mode = st.selectbox(
-        "Choose your use case:",
-        ["🏢 Business Mode - CSV Analysis", "🌍 Live Search - Location Reviews"],
-        help="Business Mode: Upload CSV files for batch processing. Live Search: Search locations for real-time review analysis."
-    )
-    
     # Sidebar controls
     with st.sidebar:
-        st.header("⚙️ Configuration")
+        # Initialize session state for mode if not exists
+        if 'mode' not in st.session_state:
+            st.session_state.mode = 'business'
         
-        # Confidence threshold
-        confidence_threshold = st.slider(
-            "Min confidence to mark as violation",
-            min_value=0.0,
-            max_value=1.0,
-            value=0.6,
-            step=0.05,
-            help="Reviews with confidence above this threshold will be flagged"
-        )
+        # Mode selection with vertical buttons
+        st.subheader("Choose your use case:")
         
-        # Max rows
-        max_rows = st.number_input(
-            "Max rows to process",
-            min_value=1,
-            max_value=10000,
-            value=200,
-            help="Limit processing to avoid timeouts"
-        )
+        if st.button(
+            "🏢 Business Mode - CSV Analysis", 
+            type="primary" if st.session_state.mode == 'business' else "secondary",
+            use_container_width=True,
+            help="Upload CSV files for batch processing"
+        ):
+            st.session_state.mode = 'business'
+            st.rerun()
         
-        # Mode-specific configuration
-        if mode.startswith("🏢"):
-            st.subheader("📁 Business Settings")
-            # CSV uploader
-            uploaded_file = st.file_uploader(
-                "Upload CSV file", 
-                type=['csv'],
-                help="CSV should contain review text in columns like 'text', 'review', 'content', or 'body'"
-            )
-        else:
-            st.subheader("🌍 Live Search Settings")
-            if google_api_key:
-                st.success("✅ Google Places API configured")
-            else:
-                st.error("❌ Google Places API key not found in environment")
-                st.info("Please ensure GOOGLE_PLACES_API_KEY is set in .env file")
-        
-        # Local Model Documentation
-        with st.expander("🔧 Local Model Format"):
-            st.code('''Local inference returns:
-[
-  {
-    "label": "ad",                       // one of: valid|ad|irrelevant|rant
-    "scores": {"ad": 0.91, "valid": 0.05, "irrelevant": 0.03, "rant": 0.01},
-    "violations": ["No Advertisement"],  // zero or more strings
-    "spans": [["promo", 10, 25], ["url", 40, 60]]   // optional highlights (type, start, end)
-  },
-  ...
-]
-
-Replace models/local_infer.py with your trained model while keeping the same return format.''', language='python')
+        if st.button(
+            "🌍 Live Search - Location Reviews", 
+            type="primary" if st.session_state.mode == 'live' else "secondary",
+            use_container_width=True,
+            help="Search locations for real-time review analysis"
+        ):
+            st.session_state.mode = 'live'
+            st.rerun()
     
     # Route to appropriate mode
-    if mode.startswith("🏢"):
-        business_mode(uploaded_file, confidence_threshold, max_rows)
+    if st.session_state.mode == 'business':
+        business_mode()
     else:
-        live_search_mode(google_api_key, confidence_threshold, max_rows)
+        live_search_mode(google_api_key)
 
-def business_mode(uploaded_file, confidence_threshold, max_rows):
+def business_mode():
+    st.header("🏢 Business Mode - CSV Analysis")
+    
+    # CSV uploader
+    uploaded_file = st.file_uploader(
+        "Upload CSV file", 
+        type=['csv'],
+        help="CSV should contain review text in columns like 'text', 'review', 'content', or 'body'"
+    )
+    
     if uploaded_file is not None:
         try:
             # Load and normalize data
             with st.spinner("Loading and normalizing data..."):
                 df = pd.read_csv(uploaded_file)
                 df = normalize_df(df)
-                
-                if len(df) > max_rows:
-                    df = df.head(max_rows)
-                    st.info(f"Truncated to first {max_rows} rows")
                 
                 st.success(f"Loaded {len(df)} reviews")
             
@@ -124,7 +94,7 @@ def business_mode(uploaded_file, confidence_threshold, max_rows):
                 df['top_conf'] = [max(pred['scores'].values()) for pred in predictions]
                 df['is_violation'] = [
                     pred['label'] in ['ad', 'irrelevant', 'rant'] and 
-                    max(pred['scores'].values()) >= confidence_threshold
+                    max(pred['scores'].values()) >= 0.6
                     for pred in predictions
                 ]
                 
@@ -318,7 +288,7 @@ def business_mode(uploaded_file, confidence_threshold, max_rows):
         })
         st.dataframe(sample_df, width='stretch')
 
-def live_search_mode(google_api_key, confidence_threshold, max_rows):
+def live_search_mode(google_api_key):
     st.header("🌍 Live Location Search")
     
     if not google_api_key:
@@ -417,7 +387,7 @@ def live_search_mode(google_api_key, confidence_threshold, max_rows):
                         st.warning(f"No '{search_query}' places found near your location. Try a different search term.")
                     else:
                         # Process organized by place
-                        process_reviews_by_place(places_with_reviews, place_info, f"{search_query} near you", confidence_threshold, max_rows)
+                        process_reviews_by_place(places_with_reviews, place_info, f"{search_query} near you", 0.6, 200)
             except Exception as e:
                 st.error(f"Error fetching live reviews: {str(e)}")
         
