@@ -1,10 +1,14 @@
 import streamlit as st
 import pandas as pd
-import requests
 import json
 from utils.schema import normalize_df
 from models.local_infer import infer_batch
 from utils.highlight import render_html_with_spans
+
+@st.cache_data
+def cached_inference(texts):
+    """Cache inference results for identical text inputs"""
+    return infer_batch(texts)
 
 def main():
     st.set_page_config(
@@ -25,35 +29,6 @@ def main():
             help="CSV should contain review text in columns like 'text', 'review', 'content', or 'body'"
         )
         
-        # Model connection
-        model_type = st.radio(
-            "Model connection",
-            ["Local Python", "HTTP API"],
-            help="Choose between local rule-based model or remote API"
-        )
-        
-        # HTTP API configuration
-        api_url = None
-        api_headers = {}
-        if model_type == "HTTP API":
-            api_url = st.text_input(
-                "API URL",
-                placeholder="https://your-api.com/classify_batch",
-                help="URL for the batch classification endpoint"
-            )
-            
-            headers_json = st.text_area(
-                "Headers (JSON)",
-                placeholder='{"Authorization": "Bearer token"}',
-                help="Optional HTTP headers as JSON"
-            )
-            
-            if headers_json.strip():
-                try:
-                    api_headers = json.loads(headers_json)
-                except json.JSONDecodeError:
-                    st.error("Invalid JSON format for headers")
-        
         # Confidence threshold
         confidence_threshold = st.slider(
             "Min confidence to mark as violation",
@@ -72,6 +47,21 @@ def main():
             value=200,
             help="Limit processing to avoid timeouts"
         )
+        
+        # Local Model Documentation
+        with st.expander("🔧 Local Model Format"):
+            st.code('''Local inference returns:
+[
+  {
+    "label": "ad",                       // one of: valid|ad|irrelevant|rant
+    "scores": {"ad": 0.91, "valid": 0.05, "irrelevant": 0.03, "rant": 0.01},
+    "violations": ["No Advertisement"],  // zero or more strings
+    "spans": [["promo", 10, 25], ["url", 40, 60]]   // optional highlights (type, start, end)
+  },
+  ...
+]
+
+Replace models/local_infer.py with your trained model while keeping the same return format.''', language='python')
     
     # Main content
     if uploaded_file is not None:
@@ -91,26 +81,7 @@ def main():
             with st.spinner("Classifying reviews..."):
                 texts = df['review_text'].tolist()
                 
-                if model_type == "HTTP API" and api_url:
-                    try:
-                        # Call HTTP API
-                        payload = {"texts": texts}
-                        response = requests.post(
-                            api_url, 
-                            json=payload, 
-                            headers=api_headers,
-                            timeout=30
-                        )
-                        response.raise_for_status()
-                        predictions = response.json()
-                        
-                    except requests.RequestException as e:
-                        st.error(f"HTTP API call failed: {str(e)}")
-                        st.stop()
-                        
-                else:
-                    # Use local model
-                    predictions = infer_batch(texts)
+                predictions = cached_inference(texts)
                 
                 # Merge predictions into dataframe
                 df['label'] = [pred['label'] for pred in predictions]
@@ -146,6 +117,33 @@ def main():
                     filtered_df = df[df['is_violation'] == True]
                 else:
                     filtered_df = df
+                
+                # Column headers with search functionality
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.subheader("🔍 Raw Reviews")
+                with col2:
+                    st.subheader("✨ Processed Reviews")
+                    # Add search box for the right column
+                    search_text = st.text_input(
+                        "🔎 Search reviews:",
+                        placeholder="Filter by review content...",
+                        key="review_search"
+                    )
+                
+                # Apply text search filter if provided
+                if search_text:
+                    filtered_df = filtered_df[
+                        filtered_df['review_text'].str.contains(
+                            search_text, 
+                            case=False, 
+                            na=False
+                        )
+                    ]
+                    if len(filtered_df) == 0:
+                        st.info(f"No reviews found matching '{search_text}'")
+                    else:
+                        st.info(f"Found {len(filtered_df)} reviews matching '{search_text}'")
                 
                 # Column headers
                 col1, col2 = st.columns(2)
