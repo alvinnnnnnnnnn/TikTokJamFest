@@ -58,15 +58,34 @@ To establish the ground truth, we first collected a total of **3,800 Google Maps
 After the automated labeling, we manually reviewed and validated the dataset to ensure accuracy. This semi-automated approach significantly reduced labeling time while maintaining high-quality training data.
 
 ### 3. Model Training
+This project trains a multi-modal machine learning model that combines text data (customer reviews) with numeric and categorical features (like ratings, review length, and categories) to classify reviews into different labels.
+
+1. **Loading dataset** 
+    -  Extract the text, labels, and other features from the dataset 
+    - Split into 70% train, 20% validation and 10% test
+
+2. **Tokenise texts**
+    - Transform the text into numbers 
+    - Build a dataset that contains the text tokens, attention mask, features and labels
+
+3. **Building the model**
+    - Create a multi-modal model that combines text encoder DistilRoBERTa, and a classifier that merges text and features 
+
+### 4. Rule based classification
+We make a list of Advertisement keywords, then we check the review:
+- If the review text is missing or empty → label as **Low Quality**
+- If the review has a URL → check if the URL belongs to the business. If no then flag as an **Advertisement**
+- If the review has no URL → check if it contains any advertisement keywords, if yes then flag as an **Advertisement**
+
 
 ## Model Metrics
 To evaluate the model's performance based on our use case, the following weighted metrics system was used:
 
-|Metrics             |Score |
-|--------------------|:----:|
-|F1-Score            | |
-|Precision           | |
-|Recall              | |
+|Metrics             |Validation Set | Test Set |
+|--------------------|:-------------:|:--------:|
+| Weighted F1-Score  | 0.81          | 0.78     |
+| Weighted Precision | 0.78          | 0.75     |
+| Weighted Recall    | 0.84          | 0.81.    |
 
 
 ## Reflections & Considerations
@@ -75,4 +94,4 @@ The dataset could be improved with additional information, particularly user met
 There is also a noticeable class imbalance in the dataset, with the majority of reviews categorized as High Quality. This imbalance may have caused a bias model performance.
 
 ## Member Contributions
-You may find the contributions of each member [here]()
+You may find the contributions of each member [here](https://github.com/alvinnnnnnnnnn/TikTokJamFest/blob/main/documents/contributions.md)
