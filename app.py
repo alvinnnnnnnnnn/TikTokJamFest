@@ -570,21 +570,21 @@ def process_reviews_by_place(places_with_reviews, place_info, search_query):
                     if row['violations']:
                         st.warning(f"⚠️ Issues: {', '.join(row['violations'])}")
                     
-                    # Highlighted text if spans exist
-                    if row['spans']:
-                        highlighted_html = render_html_with_spans(
-                            row['review_text'], 
-                            row['spans']
-                        )
-                        st.write(highlighted_html, unsafe_allow_html=True)
-                    else:
-                        st.write(row['review_text'])
+                    # # Highlighted text if spans exist
+                    # if row['spans']:
+                    #     highlighted_html = render_html_with_spans(
+                    #         row['review_text'], 
+                    #         row['spans']
+                    #     )
+                    #     st.write(highlighted_html, unsafe_allow_html=True)
+                    # else:
+                    #     st.write(row['review_text'])
             
             st.divider()
     
     # Pagination controls at the bottom
     if total_places > 1:
-        st.divider()
+        # st.divider()
         col1, col2, col3 = st.columns([1, 2, 1])
         
         with col1:
