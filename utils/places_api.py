@@ -101,15 +101,15 @@ class GooglePlacesClient:
         # Convert location string to coordinates
         coordinates = self.geocode_location(location_string)
         if not coordinates:
-            return {}, []
+            return [], []
         
         # Search nearby places
         places = self.search_nearby_places(coordinates, radius, place_type)
         if not places:
-            return {}, []
+            return [], []
         
         # Fetch reviews for each place (organized by place)
-        places_with_reviews = {}
+        places_with_reviews = []
         place_info = []
         
         for place in places[:max_places]:
@@ -131,7 +131,10 @@ class GooglePlacesClient:
                 reviews_df = self.reviews_to_dataframe(details)
                 if not reviews_df.empty:
                     reviews_df['place_name'] = place_name
-                    places_with_reviews[place_name] = reviews_df
+                    places_with_reviews.append({
+                        'name': place_name,
+                        'reviews': reviews_df
+                    })
         
         return places_with_reviews, place_info
     

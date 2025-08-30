@@ -344,123 +344,116 @@ def live_search_mode(google_api_key, confidence_threshold, max_rows):
         # Location search input
         col1, col2 = st.columns([3, 1])
         with col1:
-            search_type = st.radio(
-                "Search type:",
-                ["🔍 Search Query", "📍 Location-based"],
-                horizontal=True,
-                help="Search Query: Find specific businesses. Location-based: Find nearest places to a location."
+            search_query = st.text_input(
+                "📍 Search near location:",
+                placeholder="e.g., 'Manhattan, NY', '123 Main St, Boston'",
+                key="location_search"
+            )
+            place_type = st.selectbox(
+                "Place type:",
+                ["restaurant", "cafe", "bar", "bakery", "meal_takeaway", "food"],
+                help="Type of places to search for near the location"
             )
             
-            if search_type == "🔍 Search Query":
-                search_query = st.text_input(
-                    "🔎 Search for a business:",
-                    placeholder="e.g., 'Starbucks Times Square', 'Pizza restaurants in NYC'",
-                    key="business_search"
-                )
-            else:
-                search_query = st.text_input(
-                    "📍 Search near location:",
-                    placeholder="e.g., 'Manhattan, NY', '123 Main St, Boston'",
-                    key="location_search"
-                )
-                place_type = st.selectbox(
-                    "Place type:",
-                    ["restaurant", "cafe", "bar", "bakery", "meal_takeaway", "food"],
-                    help="Type of places to search for near the location"
-                )
+            # Add geolocation button
+            col_geo1, col_geo2 = st.columns([1, 2])
+            with col_geo1:
+                use_current_location = st.button("📍 Use My Location", key="geo_button")
+            with col_geo2:
+                st.caption("Click to automatically detect your current location")
                 
-                # Add geolocation button
-                col_geo1, col_geo2 = st.columns([1, 2])
-                with col_geo1:
-                    use_current_location = st.button("📍 Use My Location", key="geo_button")
-                with col_geo2:
-                    st.caption("Click to automatically detect your current location")
-                
-                # JavaScript for geolocation
-                if use_current_location:
-                    geolocation_html = """
-                    <script>
-                    function getCurrentLocation() {
-                        if (navigator.geolocation) {
-                            navigator.geolocation.getCurrentPosition(
-                                function(position) {
-                                    const lat = position.coords.latitude;
-                                    const lng = position.coords.longitude;
-                                    
-                                    // Store coordinates in session state via a hidden form
-                                    const form = document.createElement('form');
-                                    form.method = 'post';
-                                    form.style.display = 'none';
-                                    
-                                    const latInput = document.createElement('input');
-                                    latInput.type = 'hidden';
-                                    latInput.name = 'user_lat';
-                                    latInput.value = lat;
-                                    
-                                    const lngInput = document.createElement('input');
-                                    lngInput.type = 'hidden';
-                                    lngInput.name = 'user_lng';
-                                    lngInput.value = lng;
-                                    
-                                    form.appendChild(latInput);
-                                    form.appendChild(lngInput);
-                                    document.body.appendChild(form);
-                                    
-                                    // Display success message
-                                    alert(`Location detected: ${lat.toFixed(4)}, ${lng.toFixed(4)}`);
-                                    
-                                    // Trigger Streamlit rerun by clicking a hidden button
-                                    const rerunEvent = new CustomEvent('streamlit:rerun');
-                                    window.parent.document.dispatchEvent(rerunEvent);
-                                },
-                                function(error) {
-                                    let message = 'Location access denied. ';
-                                    switch(error.code) {
-                                        case error.PERMISSION_DENIED:
-                                            message += 'Please enable location access and try again.';
-                                            break;
-                                        case error.POSITION_UNAVAILABLE:
-                                            message += 'Location information unavailable.';
-                                            break;
-                                        case error.TIMEOUT:
-                                            message += 'Location request timed out.';
-                                            break;
-                                    }
-                                    alert(message);
+            # JavaScript for geolocation
+            if use_current_location:
+                geolocation_html = """
+                <script>
+                function getCurrentLocation() {
+                    if (navigator.geolocation) {
+                        navigator.geolocation.getCurrentPosition(
+                            function(position) {
+                                const lat = position.coords.latitude;
+                                const lng = position.coords.longitude;
+                                
+                                // Store coordinates in session state via a hidden form
+                                const form = document.createElement('form');
+                                form.method = 'post';
+                                form.style.display = 'none';
+                                
+                                const latInput = document.createElement('input');
+                                latInput.type = 'hidden';
+                                latInput.name = 'user_lat';
+                                latInput.value = lat;
+                                
+                                const lngInput = document.createElement('input');
+                                lngInput.type = 'hidden';
+                                lngInput.name = 'user_lng';
+                                lngInput.value = lng;
+                                
+                                form.appendChild(latInput);
+                                form.appendChild(lngInput);
+                                document.body.appendChild(form);
+                                
+                                // Display success message
+                                alert(`Location detected: ${lat.toFixed(4)}, ${lng.toFixed(4)}`);
+                                
+                                // Trigger Streamlit rerun by clicking a hidden button
+                                const rerunEvent = new CustomEvent('streamlit:rerun');
+                                window.parent.document.dispatchEvent(rerunEvent);
+                            },
+                            function(error) {
+                                let message = 'Location access denied. ';
+                                switch(error.code) {
+                                    case error.PERMISSION_DENIED:
+                                        message += 'Please enable location access and try again.';
+                                        break;
+                                    case error.POSITION_UNAVAILABLE:
+                                        message += 'Location information unavailable.';
+                                        break;
+                                    case error.TIMEOUT:
+                                        message += 'Location request timed out.';
+                                        break;
                                 }
-                            );
-                        } else {
-                            alert('Geolocation is not supported by this browser.');
-                        }
+                                alert(message);
+                            }
+                        );
+                    } else {
+                        alert('Geolocation is not supported by this browser.');
                     }
+                }
+                
+                // Auto-trigger on load
+                getCurrentLocation();
+                </script>
+                """
+                
+                st.components.v1.html(geolocation_html, height=0)
+                
+                # Check if we have coordinates in query params or session state
+                query_params = st.query_params
+                if 'user_lat' in query_params and 'user_lng' in query_params:
+                    user_lat = float(query_params['user_lat'])
+                    user_lng = float(query_params['user_lng'])
                     
-                    // Auto-trigger on load
-                    getCurrentLocation();
-                    </script>
-                    """
-                    
-                    st.components.v1.html(geolocation_html, height=0)
-                    
-                    # Check if we have coordinates in query params or session state
-                    query_params = st.query_params
-                    if 'user_lat' in query_params and 'user_lng' in query_params:
-                        user_lat = float(query_params['user_lat'])
-                        user_lng = float(query_params['user_lng'])
-                        
-                        # Reverse geocode to get address
-                        places_client = GooglePlacesClient(google_api_key)
-                        try:
-                            # Use Google's reverse geocoding
-                            result = places_client.client.reverse_geocode((user_lat, user_lng))
-                            if result:
-                                formatted_address = result[0]['formatted_address']
-                                st.success(f"📍 Current location detected: {formatted_address}")
-                                # Update the search query with detected location
-                                st.session_state.location_search = formatted_address
-                                st.rerun()
-                        except Exception as e:
-                            st.info(f"📍 Using coordinates: {user_lat:.4f}, {user_lng:.4f}")
-                            st.session_state.location_search = f"{user_lat:.4f}, {user_lng:.4f}"
+                    # Reverse geocode to get address
+                    places_client = GooglePlacesClient(google_api_key)
+                    try:
+                        # Use Google's reverse geocoding
+                        result = places_client.client.reverse_geocode((user_lat, user_lng))
+                        if result:
+                            formatted_address = result[0]['formatted_address']
+                            st.success(f"📍 Current location detected: {formatted_address}")
+                            # Update the search query with detected location
+                            st.session_state.location_search = formatted_address
+                            st.rerun()
+                    except Exception as e:
+                        # Fallback: use coordinates directly if geocoding fails
+                        coordinates_string = f"{user_lat:.4f}, {user_lng:.4f}"
+                        st.info(f"📍 Using coordinates: {coordinates_string}")
+                        st.session_state.location_search = coordinates_string
+                        # Clear the error and continue with coordinates
+                        if "REQUEST_DENIED" in str(e):
+                            st.warning("💡 **Tip:** Enable Geocoding API in Google Cloud Console for address names")
+                        st.rerun()
+        
         with col2:
             search_button = st.button("🔍 Search", type="primary")
         
@@ -470,34 +463,19 @@ def live_search_mode(google_api_key, confidence_threshold, max_rows):
                     # Initialize Places client
                     places_client = GooglePlacesClient(google_api_key)
                     
-                    if search_type == "🔍 Search Query":
-                        # Original search functionality
-                        reviews_df, place_info = places_client.fetch_reviews_for_query(
-                            search_query, 
-                            max_places=5
-                        )
-                        
-                        if reviews_df.empty:
-                            st.warning(f"No reviews found for '{search_query}'. Try a different search term.")
-                        else:
-                            # Process as combined reviews (existing functionality)
-                            process_combined_reviews(reviews_df, place_info, search_query, confidence_threshold, max_rows)
+                    places_with_reviews, place_info = places_client.fetch_reviews_for_location(
+                        search_query,
+                        radius=5000,
+                        place_type=place_type,
+                        max_places=5
+                    )
                     
+                    if not places_with_reviews:
+                        st.warning(f"No places found near '{search_query}'. Try a different location.")
                     else:
-                        # Location-based search  
-                        places_with_reviews, place_info = places_client.fetch_reviews_for_location(
-                            search_query,
-                            radius=5000,
-                            place_type=place_type,
-                            max_places=5
-                        )
+                        # Process organized by place
+                        process_reviews_by_place(places_with_reviews, place_info, search_query, confidence_threshold, max_rows)
                         
-                        if not places_with_reviews:
-                            st.warning(f"No places found near '{search_query}'. Try a different location.")
-                        else:
-                            # Process organized by place
-                            process_reviews_by_place(places_with_reviews, place_info, search_query, confidence_threshold, max_rows)
-                            
             except Exception as e:
                 st.error(f"Error fetching live reviews: {str(e)}")
         
