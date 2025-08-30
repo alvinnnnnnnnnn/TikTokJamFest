@@ -539,36 +539,26 @@ def process_reviews_by_place(places_with_reviews, place_info, search_query):
         # Show sample of results
         st.subheader("📋 Review Feed")
         for idx, row in filtered_df.head(10).iterrows():
-            col1, col2 = st.columns(2)
-            
-            # Left column - Raw review
-            with col1:
-                with st.container():
-                    # Basic metadata
-                    meta_cols = st.columns([1, 1, 2])
-                    meta_cols[0].caption(f"⭐ {row['rating']}")
-                    meta_cols[1].caption(f"👤 {row['user']}")
-                    meta_cols[2].caption(f"📅 {row['timestamp']}")
-                    
-                    # Raw text
-                    st.write(row['review_text'])
-            
-            # Right column - Processed review  
-            with col2:
-                with st.container():
-                    # Badge and confidence
-                    badge_col, conf_col = st.columns([1, 2])
-                    
-                    if row['label'] == 'valid':
-                        badge_col.success("✅ Valid")
-                    else:
-                        badge_col.error(f"🚫 {row['label'].title()}")
-                    
-                    conf_col.caption(f"Confidence: {row['top_conf']:.2f}")
-                    
-                    # Violations if any
-                    if row['violations']:
-                        st.warning(f"⚠️ Issues: {', '.join(row['violations'])}")
+            # Single row layout for each review
+            with st.container():
+                # Metadata row with status beside date
+                meta_cols = st.columns([1, 1, 2, 1])
+                meta_cols[0].caption(f"⭐ {row['rating']}")
+                meta_cols[1].caption(f"👤 {row['user']}")
+                meta_cols[2].caption(f"📅 {row['timestamp']}")
+                
+                # Status with colored boxes (lighter versions of Streamlit colors)
+                if row['label'] == 'valid':
+                    meta_cols[3].markdown('<div style="background-color: #e8f5e8; color: #0f5132; padding: 4px 8px; border-radius: 4px; border: 1px solid #badbcc; text-align: center; font-size: 0.9em; font-weight: bold;">✅ Valid</div>', unsafe_allow_html=True)
+                else:
+                    meta_cols[3].markdown(f'<div style="background-color: #f8e8e8; color: #58151c; padding: 4px 8px; border-radius: 4px; border: 1px solid #f1aeb5; text-align: center; font-size: 0.8em;">🚫 {row["label"].title()}</div>', unsafe_allow_html=True)
+                
+                # Review text takes full width
+                st.write(row['review_text'])
+                
+                # Violations if any
+                if row['violations']:
+                    st.warning(f"⚠️ Issues: {', '.join(row['violations'])}")
             
             st.divider()
     
