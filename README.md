@@ -85,7 +85,7 @@ To evaluate the model's performance based on our use case, the following weighte
 |--------------------|:-------------:|:--------:|
 | Weighted F1-Score  | 0.81          | 0.78     |
 | Weighted Precision | 0.78          | 0.75     |
-| Weighted Recall    | 0.84          | 0.81.    |
+| Weighted Recall    | 0.84          | 0.81     |
 
 
 ## Reflections & Considerations
