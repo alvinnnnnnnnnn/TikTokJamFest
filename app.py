@@ -25,11 +25,23 @@ def main():
     st.title("🧹 Before → After: Trustworthy Review Feed")
     st.subheader("Clean and classify Google reviews with confidence")
     
-    # Load Google API key from environment
-    google_api_key = os.getenv("GOOGLE_PLACES_API_KEY")
-    
     # Sidebar controls
     with st.sidebar:
+        # Google Places API Key input
+        st.subheader("🔑 Google Places API Key")
+        google_api_key = st.text_input(
+            "Enter your Google Places API Key:",
+            value=os.getenv("GOOGLE_PLACES_API_KEY", ""),
+            type="password",
+            help="Get your API key from Google Cloud Console",
+            placeholder="AIzaSy..."
+        )
+        
+        # Save API key to environment if provided
+        if google_api_key:
+            os.environ["GOOGLE_PLACES_API_KEY"] = google_api_key
+        
+        st.divider()
         # Initialize session state for mode if not exists
         if 'mode' not in st.session_state:
             st.session_state.mode = 'business'
@@ -106,6 +118,13 @@ def business_mode():
             with tab1:
                 st.header("Review Feed Comparison")
                 
+                # Search bar for reviews
+                search_text = st.text_input(
+                    "🔎 Search reviews:",
+                    placeholder="Filter by review content...",
+                    key="business_search"
+                )
+                
                 # Filter options
                 show_filter = st.radio(
                     "Show:",
@@ -121,19 +140,6 @@ def business_mode():
                     filtered_df = df[df['is_violation'] == True]
                 else:
                     filtered_df = df
-                
-                # Column headers with search functionality
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.subheader("🔍 Raw Reviews")
-                with col2:
-                    st.subheader("✨ Processed Reviews")
-                    # Add search box for the right column
-                    search_text = st.text_input(
-                        "🔎 Search reviews:",
-                        placeholder="Filter by review content...",
-                        key="review_search"
-                    )
                 
                 # Apply text search filter if provided
                 if search_text:
