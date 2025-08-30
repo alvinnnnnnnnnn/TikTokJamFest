@@ -386,10 +386,24 @@ def live_search_mode(google_api_key):
                     if not places_with_reviews:
                         st.warning(f"No '{search_query}' places found near your location. Try a different search term.")
                     else:
+                        # Store results in session state
+                        st.session_state.search_results = places_with_reviews
+                        st.session_state.search_place_info = place_info
+                        st.session_state.search_query_text = search_query
+                        st.session_state.current_place_page = 0  # Reset to first page
+                        
                         # Process organized by place
-                        process_reviews_by_place(places_with_reviews, place_info, f"{search_query} near you", 0.6, 200)
+                        process_reviews_by_place(places_with_reviews, place_info, search_query)
             except Exception as e:
                 st.error(f"Error fetching live reviews: {str(e)}")
+        
+        # Show existing results if they exist in session state
+        elif 'search_results' in st.session_state and st.session_state.search_results:
+            process_reviews_by_place(
+                st.session_state.search_results, 
+                st.session_state.search_place_info, 
+                st.session_state.search_query_text
+            )
         
         # Show usage instructions when not searching
         if not search_button:
@@ -410,126 +424,175 @@ def live_search_mode(google_api_key):
                 **Note:** Google Places API has usage limits and costs. Monitor your usage in Google Cloud Console.
                 """)
 
-def process_reviews_by_place(places_with_reviews, place_info, search_query, confidence_threshold, max_rows):
-    # Process organized by place
-    for idx, place in enumerate(places_with_reviews):
-        st.subheader(f"📍 {place['name']}")
+def process_reviews_by_place(places_with_reviews, place_info, search_query):
+    # Initialize pagination state
+    if 'current_place_page' not in st.session_state:
+        st.session_state.current_place_page = 0
         
-        # Normalize the reviews DataFrame
-        normalized_df = normalize_df(place['reviews'].copy())
+    total_places = len(places_with_reviews)
+    current_page = st.session_state.current_place_page
+    
+    # Ensure current page is within bounds
+    if current_page >= total_places:
+        st.session_state.current_place_page = 0
+        current_page = 0
+    
+    # Pagination controls at the top
+    if total_places > 1:
+        col1, col2, col3 = st.columns([1, 2, 1])
         
-        # Limit to max_rows
-        if len(normalized_df) > max_rows:
-            normalized_df = normalized_df.head(max_rows)
-            st.info(f"Showing first {max_rows} reviews out of {len(place['reviews'])} total")
+        with col1:
+            if st.button("◀ Previous", disabled=(current_page == 0)):
+                st.session_state.current_place_page = max(0, current_page - 1)
+                st.rerun()
         
-        # Run classification
-        with st.spinner("Classifying live reviews..."):
-            texts = normalized_df['review_text'].tolist()
-            predictions = cached_inference(texts)
-            
-            # Merge predictions
-            normalized_df['label'] = [pred['label'] for pred in predictions]
-            normalized_df['scores'] = [pred['scores'] for pred in predictions]
-            normalized_df['violations'] = [pred['violations'] for pred in predictions]
-            normalized_df['spans'] = [pred['spans'] for pred in predictions]
-            normalized_df['top_conf'] = [max(pred['scores'].values()) for pred in predictions]
-            normalized_df['is_violation'] = [
-                pred['label'] in ['ad', 'irrelevant', 'rant'] and 
-                max(pred['scores'].values()) >= confidence_threshold
-                for pred in predictions
+        with col2:
+            st.markdown(f"<div style='text-align: center; padding: 8px;'><strong>Place {current_page + 1} of {total_places}</strong></div>", unsafe_allow_html=True)
+        
+        with col3:
+            if st.button("Next ▶", disabled=(current_page >= total_places - 1)):
+                st.session_state.current_place_page = min(total_places - 1, current_page + 1)
+                st.rerun()
+        
+        st.divider()
+    
+    # Show current place
+    place = places_with_reviews[current_page]
+    st.subheader(f"📍 {place['name']}")
+    
+    # Normalize the reviews DataFrame
+    normalized_df = normalize_df(place['reviews'].copy())
+    
+    # Limit to 200 reviews (hard-coded)
+    if len(normalized_df) > 200:
+        normalized_df = normalized_df.head(200)
+        st.info(f"Showing first 200 reviews out of {len(place['reviews'])} total")
+    
+    # Run classification
+    with st.spinner("Classifying live reviews..."):
+        texts = normalized_df['review_text'].tolist()
+        predictions = cached_inference(texts)
+        
+        # Merge predictions
+        normalized_df['label'] = [pred['label'] for pred in predictions]
+        normalized_df['scores'] = [pred['scores'] for pred in predictions]
+        normalized_df['violations'] = [pred['violations'] for pred in predictions]
+        normalized_df['spans'] = [pred['spans'] for pred in predictions]
+        normalized_df['top_conf'] = [max(pred['scores'].values()) for pred in predictions]
+        normalized_df['is_violation'] = [
+            pred['label'] in ['ad', 'irrelevant', 'rant'] and 
+            max(pred['scores'].values()) >= 0.6
+            for pred in predictions
+        ]
+    
+    st.success(f"✅ Processed {len(normalized_df)} live reviews")
+    
+    # Create tabs for results
+    tab1 = st.tabs(["📋 Review Feed"])
+    
+    with tab1[0]:
+        # Show quick stats
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Total Reviews", len(normalized_df))
+        col2.metric("Valid Reviews", len(normalized_df[normalized_df['label'] == 'valid']))
+        col3.metric("Flagged Reviews", len(normalized_df[normalized_df['is_violation'] == True]))
+        
+        # Filter options
+        show_filter = st.radio(
+            "Show:",
+            ["All", "Valid only", "Violations only"],
+            horizontal=True,
+            key=f"place_filter_{current_page}"
+        )
+        
+        # Filter dataframe based on selection
+        if show_filter == "Valid only":
+            filtered_df = normalized_df[normalized_df['label'] == 'valid']
+        elif show_filter == "Violations only":
+            filtered_df = normalized_df[normalized_df['is_violation'] == True]
+        else:
+            filtered_df = normalized_df
+        
+        # Search bar
+        search_text = st.text_input("🔎 Search reviews", key=f"live_search_filter_{current_page}")
+        
+        # Apply text search filter if provided
+        if search_text:
+            filtered_df = filtered_df[
+                filtered_df['review_text'].str.contains(
+                    search_text, 
+                    case=False, 
+                    na=False
+                )
             ]
-        
-        st.success(f"✅ Processed {len(normalized_df)} live reviews")
-        
-        # Create tabs for results
-        tab1 = st.tabs(["📋 Review Feed"])
-        
-        with tab1[0]:
-            # Show quick stats
-            col1, col2, col3 = st.columns(3)
-            col1.metric("Total Reviews", len(normalized_df))
-            col2.metric("Valid Reviews", len(normalized_df[normalized_df['label'] == 'valid']))
-            col3.metric("Flagged Reviews", len(normalized_df[normalized_df['is_violation'] == True]))
-            
-            # Filter options
-            show_filter = st.radio(
-                "Show:",
-                ["All", "Valid only", "Violations only"],
-                horizontal=True,
-                key=f"place_filter_{idx}"
-            )
-            
-            # Filter dataframe based on selection
-            if show_filter == "Valid only":
-                filtered_df = normalized_df[normalized_df['label'] == 'valid']
-            elif show_filter == "Violations only":
-                filtered_df = normalized_df[normalized_df['is_violation'] == True]
+            if len(filtered_df) == 0:
+                st.info(f"No reviews found matching '{search_text}'")
             else:
-                filtered_df = normalized_df
+                st.info(f"Found {len(filtered_df)} reviews matching '{search_text}'")
+        
+        # Show sample of results
+        st.subheader("📋 Review Feed")
+        for idx, row in filtered_df.head(10).iterrows():
+            col1, col2 = st.columns(2)
             
-            # Search bar
-            search_text = st.text_input("🔎 Search reviews", key=f"live_search_filter_{idx}")
+            # Left column - Raw review
+            with col1:
+                with st.container():
+                    # Basic metadata
+                    meta_cols = st.columns([1, 1, 2])
+                    meta_cols[0].caption(f"⭐ {row['rating']}")
+                    meta_cols[1].caption(f"👤 {row['user']}")
+                    meta_cols[2].caption(f"📅 {row['timestamp']}")
+                    
+                    # Raw text
+                    st.write(row['review_text'])
             
-            # Apply text search filter if provided
-            if search_text:
-                filtered_df = filtered_df[
-                    filtered_df['review_text'].str.contains(
-                        search_text, 
-                        case=False, 
-                        na=False
-                    )
-                ]
-                if len(filtered_df) == 0:
-                    st.info(f"No reviews found matching '{search_text}'")
-                else:
-                    st.info(f"Found {len(filtered_df)} reviews matching '{search_text}'")
-            
-            # Show sample of results
-            st.subheader("📋 Review Feed")
-            for idx, row in filtered_df.head(10).iterrows():
-                col1, col2 = st.columns(2)
-                
-                # Left column - Raw review
-                with col1:
-                    with st.container():
-                        # Basic metadata
-                        meta_cols = st.columns([1, 1, 2])
-                        meta_cols[0].caption(f"⭐ {row['rating']}")
-                        meta_cols[1].caption(f"👤 {row['user']}")
-                        meta_cols[2].caption(f"📅 {row['timestamp']}")
-                        
-                        # Raw text
+            # Right column - Processed review  
+            with col2:
+                with st.container():
+                    # Badge and confidence
+                    badge_col, conf_col = st.columns([1, 2])
+                    
+                    if row['label'] == 'valid':
+                        badge_col.success("✅ Valid")
+                    else:
+                        badge_col.error(f"🚫 {row['label'].title()}")
+                    
+                    conf_col.caption(f"Confidence: {row['top_conf']:.2f}")
+                    
+                    # Violations if any
+                    if row['violations']:
+                        st.warning(f"⚠️ Issues: {', '.join(row['violations'])}")
+                    
+                    # Highlighted text if spans exist
+                    if row['spans']:
+                        highlighted_html = render_html_with_spans(
+                            row['review_text'], 
+                            row['spans']
+                        )
+                        st.write(highlighted_html, unsafe_allow_html=True)
+                    else:
                         st.write(row['review_text'])
-                
-                # Right column - Processed review  
-                with col2:
-                    with st.container():
-                        # Badge and confidence
-                        badge_col, conf_col = st.columns([1, 2])
-                        
-                        if row['label'] == 'valid':
-                            badge_col.success("✅ Valid")
-                        else:
-                            badge_col.error(f"🚫 {row['label'].title()}")
-                        
-                        conf_col.caption(f"Confidence: {row['top_conf']:.2f}")
-                        
-                        # Violations if any
-                        if row['violations']:
-                            st.warning(f"⚠️ Issues: {', '.join(row['violations'])}")
-                        
-                        # Highlighted text if spans exist
-                        if row['spans']:
-                            highlighted_html = render_html_with_spans(
-                                row['review_text'], 
-                                row['spans']
-                            )
-                            st.write(highlighted_html, unsafe_allow_html=True)
-                        else:
-                            st.write(row['review_text'])
-                
-                st.divider()
+            
+            st.divider()
+    
+    # Pagination controls at the bottom
+    if total_places > 1:
+        st.divider()
+        col1, col2, col3 = st.columns([1, 2, 1])
+        
+        with col1:
+            if st.button("◀ Previous Place", disabled=(current_page == 0), key="prev_bottom"):
+                st.session_state.current_place_page = max(0, current_page - 1)
+                st.rerun()
+        
+        with col2:
+            st.markdown(f"<div style='text-align: center; padding: 8px;'><strong>Place {current_page + 1} of {total_places}</strong></div>", unsafe_allow_html=True)
+        
+        with col3:
+            if st.button("Next Place ▶", disabled=(current_page >= total_places - 1), key="next_bottom"):
+                st.session_state.current_place_page = min(total_places - 1, current_page + 1)
+                st.rerun()
 
 if __name__ == "__main__":
     main()
