@@ -55,7 +55,7 @@ class GooglePlacesClient:
         
         return df
     
-    def fetch_reviews_for_query(self, query, max_places=3):
+    def fetch_reviews_for_query(self, query, max_places=5):
         """Complete pipeline: search -> get details -> extract reviews"""
         places = self.search_places(query)
         

@@ -361,7 +361,7 @@ def live_search_mode(google_api_key, confidence_threshold, max_rows):
                     # Fetch reviews
                     reviews_df, place_info = places_client.fetch_reviews_for_query(
                         search_query, 
-                        max_places=3
+                        max_places=5
                     )
                     
                     if reviews_df.empty:
