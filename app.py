@@ -4,6 +4,7 @@ import json
 from utils.schema import normalize_df
 from models.local_infer import infer_batch
 from utils.highlight import render_html_with_spans
+from utils.places_api import GooglePlacesClient
 
 @st.cache_data
 def cached_inference(texts):
@@ -18,16 +19,16 @@ def main():
     st.title("🧹 Before → After: Trustworthy Review Feed")
     st.subheader("Clean and classify Google reviews with confidence")
     
+    # Top-level mode selection
+    mode = st.selectbox(
+        "Choose your use case:",
+        ["🏢 Business Mode - CSV Analysis", "🌍 Live Search - Location Reviews"],
+        help="Business Mode: Upload CSV files for batch processing. Live Search: Search locations for real-time review analysis."
+    )
+    
     # Sidebar controls
     with st.sidebar:
         st.header("⚙️ Configuration")
-        
-        # CSV uploader
-        uploaded_file = st.file_uploader(
-            "Upload CSV file", 
-            type=['csv'],
-            help="CSV should contain review text in columns like 'text', 'review', 'content', or 'body'"
-        )
         
         # Confidence threshold
         confidence_threshold = st.slider(
@@ -48,6 +49,28 @@ def main():
             help="Limit processing to avoid timeouts"
         )
         
+        # Mode-specific configuration
+        if mode.startswith("🏢"):
+            st.subheader("📁 Business Settings")
+            # CSV uploader
+            uploaded_file = st.file_uploader(
+                "Upload CSV file", 
+                type=['csv'],
+                help="CSV should contain review text in columns like 'text', 'review', 'content', or 'body'"
+            )
+        else:
+            st.subheader("🌍 Live Search Settings")
+            google_api_key = st.text_input(
+                "Google Places API Key",
+                type="password",
+                help="Required for live location search. Get from Google Cloud Console."
+            )
+            
+            if google_api_key:
+                st.success("✅ API key configured")
+            else:
+                st.warning("⚠️ API key required for live search")
+        
         # Local Model Documentation
         with st.expander("🔧 Local Model Format"):
             st.code('''Local inference returns:
@@ -63,7 +86,13 @@ def main():
 
 Replace models/local_infer.py with your trained model while keeping the same return format.''', language='python')
     
-    # Main content
+    # Route to appropriate mode
+    if mode.startswith("🏢"):
+        business_mode(uploaded_file, confidence_threshold, max_rows)
+    else:
+        live_search_mode(google_api_key, confidence_threshold, max_rows)
+
+def business_mode(uploaded_file, confidence_threshold, max_rows):
     if uploaded_file is not None:
         try:
             # Load and normalize data
@@ -268,22 +297,257 @@ Replace models/local_infer.py with your trained model while keeping the same ret
             st.stop()
             
     else:
-        # Welcome message
-        st.info("👆 Upload a CSV file to get started!")
-        
-        # Show sample data format
+        # Sample data preview when no file uploaded
+        st.info("👆 Upload a CSV file to get started")
         st.subheader("Expected CSV Format")
         sample_df = pd.DataFrame({
             'review_text': [
-                "Great service and food!",
-                "Visit our website www.promo.com for deals!",
-                "Never been here but heard it's bad."
+                'Great food and service!',
+                'Check out our website at example.com for deals!',
+                'Terrible experience, worst restaurant ever!!!',
+                'Nice ambiance, will come again'
             ],
-            'rating': [5, 1, 2],
-            'user': ['Alice', 'PromoBot', 'Reviewer'],
-            'timestamp': ['2024-01-01', '2024-01-02', '2024-01-03']
+            'rating': [5, 4, 1, 4],
+            'user': ['Alice', 'Bob', 'Charlie', 'Dana'],
+            'timestamp': ['2024-01-15', '2024-01-16', '2024-01-17', '2024-01-18']
         })
         st.dataframe(sample_df, width='stretch')
+
+def live_search_mode(google_api_key, confidence_threshold, max_rows):
+    st.header("🌍 Live Location Search")
+    
+    if not google_api_key:
+        st.warning("⚠️ Please configure Google Places API key in the sidebar to use live search.")
+        st.info("Get your API key from [Google Cloud Console](https://console.cloud.google.com/apis/credentials)")
+        
+        # Show usage instructions
+        with st.expander("ℹ️ How to use Live Search"):
+            st.write("""
+            **Search Tips:**
+            - Use specific business names: "McDonald's Times Square"
+            - Search by category and location: "Pizza restaurants in San Francisco" 
+            - Use full addresses for precise results
+            - Try different variations if no results found
+            
+            **What happens:**
+            1. Searches Google Places for matching locations
+            2. Fetches up to 5 reviews per location (Google API limit)
+            3. Runs the same classification model as CSV uploads
+            4. Shows results with same visualizations and export options
+            
+            **Note:** Google Places API has usage limits and costs. Monitor your usage in Google Cloud Console.
+            """)
+    else:
+        # Location search input
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            search_query = st.text_input(
+                "🔎 Search for a location:",
+                placeholder="e.g., 'Starbucks Times Square', 'Pizza restaurants in NYC', or specific address",
+                key="location_search"
+            )
+        with col2:
+            search_button = st.button("🔍 Search", type="primary")
+        
+        if search_button and search_query:
+            try:
+                with st.spinner("Fetching reviews from Google Places..."):
+                    # Initialize Places client
+                    places_client = GooglePlacesClient(google_api_key)
+                    
+                    # Fetch reviews
+                    reviews_df, place_info = places_client.fetch_reviews_for_query(
+                        search_query, 
+                        max_places=3
+                    )
+                    
+                    if reviews_df.empty:
+                        st.warning(f"No reviews found for '{search_query}'. Try a different search term.")
+                    else:
+                        # Show place information
+                        st.subheader("📍 Found Places")
+                        for place in place_info:
+                            col1, col2, col3 = st.columns([2, 1, 1])
+                            col1.write(f"**{place['name']}**")
+                            col2.write(f"⭐ {place['rating']}")
+                            col3.write(f"📍 {place['address'][:50]}...")
+                        
+                        # Normalize the reviews DataFrame
+                        normalized_df = normalize_df(reviews_df.copy())
+                        
+                        # Limit to max_rows
+                        if len(normalized_df) > max_rows:
+                            normalized_df = normalized_df.head(max_rows)
+                            st.info(f"Showing first {max_rows} reviews out of {len(reviews_df)} total")
+                        
+                        # Run classification
+                        with st.spinner("Classifying live reviews..."):
+                            texts = normalized_df['review_text'].tolist()
+                            predictions = cached_inference(texts)
+                            
+                            # Merge predictions
+                            normalized_df['label'] = [pred['label'] for pred in predictions]
+                            normalized_df['scores'] = [pred['scores'] for pred in predictions]
+                            normalized_df['violations'] = [pred['violations'] for pred in predictions]
+                            normalized_df['spans'] = [pred['spans'] for pred in predictions]
+                            normalized_df['top_conf'] = [max(pred['scores'].values()) for pred in predictions]
+                            normalized_df['is_violation'] = [
+                                pred['label'] in ['ad', 'irrelevant', 'rant'] and 
+                                max(pred['scores'].values()) >= confidence_threshold
+                                for pred in predictions
+                            ]
+                        
+                        st.success(f"✅ Processed {len(normalized_df)} live reviews")
+                        
+                        # Create tabs for results
+                        tab1, tab2, tab3 = st.tabs(["📋 Review Feed", "📊 Metrics", "💾 Export"])
+                        
+                        with tab1:
+                            # Show quick stats
+                            col1, col2, col3 = st.columns(3)
+                            col1.metric("Total Reviews", len(normalized_df))
+                            col2.metric("Valid Reviews", len(normalized_df[normalized_df['label'] == 'valid']))
+                            col3.metric("Flagged Reviews", len(normalized_df[normalized_df['is_violation'] == True]))
+                            
+                            # Filter options
+                            show_filter = st.radio(
+                                "Show:",
+                                ["All", "Valid only", "Violations only"],
+                                horizontal=True
+                            )
+                            
+                            # Filter dataframe based on selection
+                            if show_filter == "Valid only":
+                                filtered_df = normalized_df[normalized_df['label'] == 'valid']
+                            elif show_filter == "Violations only":
+                                filtered_df = normalized_df[normalized_df['is_violation'] == True]
+                            else:
+                                filtered_df = normalized_df
+                            
+                            # Search bar
+                            search_text = st.text_input("🔎 Search reviews", key="live_search_filter")
+                            
+                            # Apply text search filter if provided
+                            if search_text:
+                                filtered_df = filtered_df[
+                                    filtered_df['review_text'].str.contains(
+                                        search_text, 
+                                        case=False, 
+                                        na=False
+                                    )
+                                ]
+                                if len(filtered_df) == 0:
+                                    st.info(f"No reviews found matching '{search_text}'")
+                                else:
+                                    st.info(f"Found {len(filtered_df)} reviews matching '{search_text}'")
+                            
+                            # Show sample of results
+                            st.subheader("📋 Review Feed")
+                            for idx, row in filtered_df.head(10).iterrows():
+                                col1, col2 = st.columns(2)
+                                
+                                # Left column - Raw review
+                                with col1:
+                                    with st.container():
+                                        # Basic metadata
+                                        meta_cols = st.columns([1, 1, 2])
+                                        meta_cols[0].caption(f"⭐ {row['rating']}")
+                                        meta_cols[1].caption(f"👤 {row['user']}")
+                                        meta_cols[2].caption(f"📅 {row['timestamp']}")
+                                        
+                                        # Raw text
+                                        st.write(row['review_text'])
+                                
+                                # Right column - Processed review  
+                                with col2:
+                                    with st.container():
+                                        # Badge and confidence
+                                        badge_col, conf_col = st.columns([1, 2])
+                                        
+                                        if row['label'] == 'valid':
+                                            badge_col.success("✅ Valid")
+                                        else:
+                                            badge_col.error(f"🚫 {row['label'].title()}")
+                                        
+                                        conf_col.caption(f"Confidence: {row['top_conf']:.2f}")
+                                        
+                                        # Violations if any
+                                        if row['violations']:
+                                            st.warning(f"⚠️ Issues: {', '.join(row['violations'])}")
+                                        
+                                        # Highlighted text if spans exist
+                                        if row['spans']:
+                                            highlighted_html = render_html_with_spans(
+                                                row['review_text'], 
+                                                row['spans']
+                                            )
+                                            st.write(highlighted_html, unsafe_allow_html=True)
+                                        else:
+                                            st.write(row['review_text'])
+                                
+                                st.divider()
+                        
+                        with tab2:
+                            st.header("📊 Classification Metrics")
+                            
+                            # Summary stats
+                            col1, col2, col3, col4 = st.columns(4)
+                            col1.metric("Total Reviews", len(normalized_df))
+                            col2.metric("Valid Reviews", len(normalized_df[normalized_df['label'] == 'valid']))
+                            col3.metric("Flagged Reviews", len(normalized_df[normalized_df['is_violation'] == True]))
+                            col4.metric("Flag Rate", f"{(len(normalized_df[normalized_df['is_violation'] == True]) / len(normalized_df) * 100):.1f}%")
+                            
+                            # Detailed breakdown
+                            st.subheader("Detailed Breakdown")
+                            breakdown_df = normalized_df['label'].value_counts().reset_index()
+                            breakdown_df.columns = ['Label', 'Count']
+                            breakdown_df['Percentage'] = (breakdown_df['Count'] / len(normalized_df) * 100).round(1)
+                            st.dataframe(breakdown_df, width='stretch')
+                        
+                        with tab3:
+                            st.header("💾 Export Live Results")
+                            
+                            # Filter for valid reviews only
+                            clean_live_df = normalized_df[normalized_df['label'] == 'valid'].copy()
+                            clean_live_df['reason'] = ""
+                            
+                            # Select columns for export
+                            export_columns = ['review_text', 'rating', 'user', 'timestamp', 'place_name', 'top_conf', 'reason']
+                            export_df = clean_live_df[export_columns]
+                            
+                            st.write(f"**Clean dataset contains {len(export_df)} valid reviews**")
+                            st.dataframe(export_df.head(), width='stretch')
+                            
+                            # Download button
+                            csv_data = export_df.to_csv(index=False)
+                            st.download_button(
+                                label=f"📥 Download {search_query.replace(' ', '_')}_reviews.csv",
+                                data=csv_data,
+                                file_name=f"{search_query.replace(' ', '_')}_reviews.csv",
+                                mime="text/csv"
+                            )
+                            
+            except Exception as e:
+                st.error(f"Error fetching live reviews: {str(e)}")
+        
+        # Show usage instructions when not searching
+        if not (search_button and search_query):
+            with st.expander("ℹ️ How to use Live Search"):
+                st.write("""
+                **Search Tips:**
+                - Use specific business names: "McDonald's Times Square"
+                - Search by category and location: "Pizza restaurants in San Francisco" 
+                - Use full addresses for precise results
+                - Try different variations if no results found
+                
+                **What happens:**
+                1. Searches Google Places for matching locations
+                2. Fetches up to 5 reviews per location (Google API limit)
+                3. Runs the same classification model as CSV uploads
+                4. Shows results with same visualizations and export options
+                
+                **Note:** Google Places API has usage limits and costs. Monitor your usage in Google Cloud Console.
+                """)
 
 if __name__ == "__main__":
     main()
