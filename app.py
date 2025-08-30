@@ -344,11 +344,123 @@ def live_search_mode(google_api_key, confidence_threshold, max_rows):
         # Location search input
         col1, col2 = st.columns([3, 1])
         with col1:
-            search_query = st.text_input(
-                "🔎 Search for a location:",
-                placeholder="e.g., 'Starbucks Times Square', 'Pizza restaurants in NYC', or specific address",
-                key="location_search"
+            search_type = st.radio(
+                "Search type:",
+                ["🔍 Search Query", "📍 Location-based"],
+                horizontal=True,
+                help="Search Query: Find specific businesses. Location-based: Find nearest places to a location."
             )
+            
+            if search_type == "🔍 Search Query":
+                search_query = st.text_input(
+                    "🔎 Search for a business:",
+                    placeholder="e.g., 'Starbucks Times Square', 'Pizza restaurants in NYC'",
+                    key="business_search"
+                )
+            else:
+                search_query = st.text_input(
+                    "📍 Search near location:",
+                    placeholder="e.g., 'Manhattan, NY', '123 Main St, Boston'",
+                    key="location_search"
+                )
+                place_type = st.selectbox(
+                    "Place type:",
+                    ["restaurant", "cafe", "bar", "bakery", "meal_takeaway", "food"],
+                    help="Type of places to search for near the location"
+                )
+                
+                # Add geolocation button
+                col_geo1, col_geo2 = st.columns([1, 2])
+                with col_geo1:
+                    use_current_location = st.button("📍 Use My Location", key="geo_button")
+                with col_geo2:
+                    st.caption("Click to automatically detect your current location")
+                
+                # JavaScript for geolocation
+                if use_current_location:
+                    geolocation_html = """
+                    <script>
+                    function getCurrentLocation() {
+                        if (navigator.geolocation) {
+                            navigator.geolocation.getCurrentPosition(
+                                function(position) {
+                                    const lat = position.coords.latitude;
+                                    const lng = position.coords.longitude;
+                                    
+                                    // Store coordinates in session state via a hidden form
+                                    const form = document.createElement('form');
+                                    form.method = 'post';
+                                    form.style.display = 'none';
+                                    
+                                    const latInput = document.createElement('input');
+                                    latInput.type = 'hidden';
+                                    latInput.name = 'user_lat';
+                                    latInput.value = lat;
+                                    
+                                    const lngInput = document.createElement('input');
+                                    lngInput.type = 'hidden';
+                                    lngInput.name = 'user_lng';
+                                    lngInput.value = lng;
+                                    
+                                    form.appendChild(latInput);
+                                    form.appendChild(lngInput);
+                                    document.body.appendChild(form);
+                                    
+                                    // Display success message
+                                    alert(`Location detected: ${lat.toFixed(4)}, ${lng.toFixed(4)}`);
+                                    
+                                    // Trigger Streamlit rerun by clicking a hidden button
+                                    const rerunEvent = new CustomEvent('streamlit:rerun');
+                                    window.parent.document.dispatchEvent(rerunEvent);
+                                },
+                                function(error) {
+                                    let message = 'Location access denied. ';
+                                    switch(error.code) {
+                                        case error.PERMISSION_DENIED:
+                                            message += 'Please enable location access and try again.';
+                                            break;
+                                        case error.POSITION_UNAVAILABLE:
+                                            message += 'Location information unavailable.';
+                                            break;
+                                        case error.TIMEOUT:
+                                            message += 'Location request timed out.';
+                                            break;
+                                    }
+                                    alert(message);
+                                }
+                            );
+                        } else {
+                            alert('Geolocation is not supported by this browser.');
+                        }
+                    }
+                    
+                    // Auto-trigger on load
+                    getCurrentLocation();
+                    </script>
+                    """
+                    
+                    st.components.v1.html(geolocation_html, height=0)
+                    
+                    # Check if we have coordinates in query params or session state
+                    query_params = st.query_params
+                    if 'user_lat' in query_params and 'user_lng' in query_params:
+                        user_lat = float(query_params['user_lat'])
+                        user_lng = float(query_params['user_lng'])
+                        
+                        # Reverse geocode to get address
+                        places_client = GooglePlacesClient(google_api_key)
+                        try:
+                            # Use Google's reverse geocoding
+                            result = places_client.client.reverse_geocode((user_lat, user_lng))
+                            if result:
+                                formatted_address = result[0]['formatted_address']
+                                st.success(f"📍 Current location detected: {formatted_address}")
+                                # Update the search query with detected location
+                                st.session_state.location_search = formatted_address
+                                st.rerun()
+                        except Exception as e:
+                            st.info(f"📍 Using coordinates: {user_lat:.4f}, {user_lng:.4f}")
+                            st.session_state.location_search = f"{user_lat:.4f}, {user_lng:.4f}"
         with col2:
             search_button = st.button("🔍 Search", type="primary")
         
@@ -358,177 +470,33 @@ def live_search_mode(google_api_key, confidence_threshold, max_rows):
                     # Initialize Places client
                     places_client = GooglePlacesClient(google_api_key)
                     
-                    # Fetch reviews
-                    reviews_df, place_info = places_client.fetch_reviews_for_query(
-                        search_query, 
-                        max_places=5
-                    )
+                    if search_type == "🔍 Search Query":
+                        # Original search functionality
+                        reviews_df, place_info = places_client.fetch_reviews_for_query(
+                            search_query, 
+                            max_places=5
+                        )
+                        
+                        if reviews_df.empty:
+                            st.warning(f"No reviews found for '{search_query}'. Try a different search term.")
+                        else:
+                            # Process as combined reviews (existing functionality)
+                            process_combined_reviews(reviews_df, place_info, search_query, confidence_threshold, max_rows)
                     
-                    if reviews_df.empty:
-                        st.warning(f"No reviews found for '{search_query}'. Try a different search term.")
                     else:
-                        # Show place information
-                        st.subheader("📍 Found Places")
-                        for place in place_info:
-                            col1, col2, col3 = st.columns([2, 1, 1])
-                            col1.write(f"**{place['name']}**")
-                            col2.write(f"⭐ {place['rating']}")
-                            col3.write(f"📍 {place['address'][:50]}...")
+                        # Location-based search  
+                        places_with_reviews, place_info = places_client.fetch_reviews_for_location(
+                            search_query,
+                            radius=5000,
+                            place_type=place_type,
+                            max_places=5
+                        )
                         
-                        # Normalize the reviews DataFrame
-                        normalized_df = normalize_df(reviews_df.copy())
-                        
-                        # Limit to max_rows
-                        if len(normalized_df) > max_rows:
-                            normalized_df = normalized_df.head(max_rows)
-                            st.info(f"Showing first {max_rows} reviews out of {len(reviews_df)} total")
-                        
-                        # Run classification
-                        with st.spinner("Classifying live reviews..."):
-                            texts = normalized_df['review_text'].tolist()
-                            predictions = cached_inference(texts)
-                            
-                            # Merge predictions
-                            normalized_df['label'] = [pred['label'] for pred in predictions]
-                            normalized_df['scores'] = [pred['scores'] for pred in predictions]
-                            normalized_df['violations'] = [pred['violations'] for pred in predictions]
-                            normalized_df['spans'] = [pred['spans'] for pred in predictions]
-                            normalized_df['top_conf'] = [max(pred['scores'].values()) for pred in predictions]
-                            normalized_df['is_violation'] = [
-                                pred['label'] in ['ad', 'irrelevant', 'rant'] and 
-                                max(pred['scores'].values()) >= confidence_threshold
-                                for pred in predictions
-                            ]
-                        
-                        st.success(f"✅ Processed {len(normalized_df)} live reviews")
-                        
-                        # Create tabs for results
-                        tab1, tab2, tab3 = st.tabs(["📋 Review Feed", "📊 Metrics", "💾 Export"])
-                        
-                        with tab1:
-                            # Show quick stats
-                            col1, col2, col3 = st.columns(3)
-                            col1.metric("Total Reviews", len(normalized_df))
-                            col2.metric("Valid Reviews", len(normalized_df[normalized_df['label'] == 'valid']))
-                            col3.metric("Flagged Reviews", len(normalized_df[normalized_df['is_violation'] == True]))
-                            
-                            # Filter options
-                            show_filter = st.radio(
-                                "Show:",
-                                ["All", "Valid only", "Violations only"],
-                                horizontal=True
-                            )
-                            
-                            # Filter dataframe based on selection
-                            if show_filter == "Valid only":
-                                filtered_df = normalized_df[normalized_df['label'] == 'valid']
-                            elif show_filter == "Violations only":
-                                filtered_df = normalized_df[normalized_df['is_violation'] == True]
-                            else:
-                                filtered_df = normalized_df
-                            
-                            # Search bar
-                            search_text = st.text_input("🔎 Search reviews", key="live_search_filter")
-                            
-                            # Apply text search filter if provided
-                            if search_text:
-                                filtered_df = filtered_df[
-                                    filtered_df['review_text'].str.contains(
-                                        search_text, 
-                                        case=False, 
-                                        na=False
-                                    )
-                                ]
-                                if len(filtered_df) == 0:
-                                    st.info(f"No reviews found matching '{search_text}'")
-                                else:
-                                    st.info(f"Found {len(filtered_df)} reviews matching '{search_text}'")
-                            
-                            # Show sample of results
-                            st.subheader("📋 Review Feed")
-                            for idx, row in filtered_df.head(10).iterrows():
-                                col1, col2 = st.columns(2)
-                                
-                                # Left column - Raw review
-                                with col1:
-                                    with st.container():
-                                        # Basic metadata
-                                        meta_cols = st.columns([1, 1, 2])
-                                        meta_cols[0].caption(f"⭐ {row['rating']}")
-                                        meta_cols[1].caption(f"👤 {row['user']}")
-                                        meta_cols[2].caption(f"📅 {row['timestamp']}")
-                                        
-                                        # Raw text
-                                        st.write(row['review_text'])
-                                
-                                # Right column - Processed review  
-                                with col2:
-                                    with st.container():
-                                        # Badge and confidence
-                                        badge_col, conf_col = st.columns([1, 2])
-                                        
-                                        if row['label'] == 'valid':
-                                            badge_col.success("✅ Valid")
-                                        else:
-                                            badge_col.error(f"🚫 {row['label'].title()}")
-                                        
-                                        conf_col.caption(f"Confidence: {row['top_conf']:.2f}")
-                                        
-                                        # Violations if any
-                                        if row['violations']:
-                                            st.warning(f"⚠️ Issues: {', '.join(row['violations'])}")
-                                        
-                                        # Highlighted text if spans exist
-                                        if row['spans']:
-                                            highlighted_html = render_html_with_spans(
-                                                row['review_text'], 
-                                                row['spans']
-                                            )
-                                            st.write(highlighted_html, unsafe_allow_html=True)
-                                        else:
-                                            st.write(row['review_text'])
-                                
-                                st.divider()
-                        
-                        with tab2:
-                            st.header("📊 Classification Metrics")
-                            
-                            # Summary stats
-                            col1, col2, col3, col4 = st.columns(4)
-                            col1.metric("Total Reviews", len(normalized_df))
-                            col2.metric("Valid Reviews", len(normalized_df[normalized_df['label'] == 'valid']))
-                            col3.metric("Flagged Reviews", len(normalized_df[normalized_df['is_violation'] == True]))
-                            col4.metric("Flag Rate", f"{(len(normalized_df[normalized_df['is_violation'] == True]) / len(normalized_df) * 100):.1f}%")
-                            
-                            # Detailed breakdown
-                            st.subheader("Detailed Breakdown")
-                            breakdown_df = normalized_df['label'].value_counts().reset_index()
-                            breakdown_df.columns = ['Label', 'Count']
-                            breakdown_df['Percentage'] = (breakdown_df['Count'] / len(normalized_df) * 100).round(1)
-                            st.dataframe(breakdown_df, width='stretch')
-                        
-                        with tab3:
-                            st.header("💾 Export Live Results")
-                            
-                            # Filter for valid reviews only
-                            clean_live_df = normalized_df[normalized_df['label'] == 'valid'].copy()
-                            clean_live_df['reason'] = ""
-                            
-                            # Select columns for export
-                            export_columns = ['review_text', 'rating', 'user', 'timestamp', 'place_name', 'top_conf', 'reason']
-                            export_df = clean_live_df[export_columns]
-                            
-                            st.write(f"**Clean dataset contains {len(export_df)} valid reviews**")
-                            st.dataframe(export_df.head(), width='stretch')
-                            
-                            # Download button
-                            csv_data = export_df.to_csv(index=False)
-                            st.download_button(
-                                label=f"📥 Download {search_query.replace(' ', '_')}_reviews.csv",
-                                data=csv_data,
-                                file_name=f"{search_query.replace(' ', '_')}_reviews.csv",
-                                mime="text/csv"
-                            )
+                        if not places_with_reviews:
+                            st.warning(f"No places found near '{search_query}'. Try a different location.")
+                        else:
+                            # Process organized by place
+                            process_reviews_by_place(places_with_reviews, place_info, search_query, confidence_threshold, max_rows)
                             
             except Exception as e:
                 st.error(f"Error fetching live reviews: {str(e)}")
@@ -551,6 +519,322 @@ def live_search_mode(google_api_key, confidence_threshold, max_rows):
                 
                 **Note:** Google Places API has usage limits and costs. Monitor your usage in Google Cloud Console.
                 """)
+
+def process_combined_reviews(reviews_df, place_info, search_query, confidence_threshold, max_rows):
+    # Normalize the reviews DataFrame
+    normalized_df = normalize_df(reviews_df.copy())
+    
+    # Limit to max_rows
+    if len(normalized_df) > max_rows:
+        normalized_df = normalized_df.head(max_rows)
+        st.info(f"Showing first {max_rows} reviews out of {len(reviews_df)} total")
+    
+    # Run classification
+    with st.spinner("Classifying live reviews..."):
+        texts = normalized_df['review_text'].tolist()
+        predictions = cached_inference(texts)
+        
+        # Merge predictions
+        normalized_df['label'] = [pred['label'] for pred in predictions]
+        normalized_df['scores'] = [pred['scores'] for pred in predictions]
+        normalized_df['violations'] = [pred['violations'] for pred in predictions]
+        normalized_df['spans'] = [pred['spans'] for pred in predictions]
+        normalized_df['top_conf'] = [max(pred['scores'].values()) for pred in predictions]
+        normalized_df['is_violation'] = [
+            pred['label'] in ['ad', 'irrelevant', 'rant'] and 
+            max(pred['scores'].values()) >= confidence_threshold
+            for pred in predictions
+        ]
+    
+    st.success(f"✅ Processed {len(normalized_df)} live reviews")
+    
+    # Create tabs for results
+    tab1, tab2, tab3 = st.tabs(["📋 Review Feed", "📊 Metrics", "💾 Export"])
+    
+    with tab1:
+        # Show quick stats
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Total Reviews", len(normalized_df))
+        col2.metric("Valid Reviews", len(normalized_df[normalized_df['label'] == 'valid']))
+        col3.metric("Flagged Reviews", len(normalized_df[normalized_df['is_violation'] == True]))
+        
+        # Filter options
+        show_filter = st.radio(
+            "Show:",
+            ["All", "Valid only", "Violations only"],
+            horizontal=True
+        )
+        
+        # Filter dataframe based on selection
+        if show_filter == "Valid only":
+            filtered_df = normalized_df[normalized_df['label'] == 'valid']
+        elif show_filter == "Violations only":
+            filtered_df = normalized_df[normalized_df['is_violation'] == True]
+        else:
+            filtered_df = normalized_df
+        
+        # Search bar
+        search_text = st.text_input("🔎 Search reviews", key="live_search_filter")
+        
+        # Apply text search filter if provided
+        if search_text:
+            filtered_df = filtered_df[
+                filtered_df['review_text'].str.contains(
+                    search_text, 
+                    case=False, 
+                    na=False
+                )
+            ]
+            if len(filtered_df) == 0:
+                st.info(f"No reviews found matching '{search_text}'")
+            else:
+                st.info(f"Found {len(filtered_df)} reviews matching '{search_text}'")
+        
+        # Show sample of results
+        st.subheader("📋 Review Feed")
+        for idx, row in filtered_df.head(10).iterrows():
+            col1, col2 = st.columns(2)
+            
+            # Left column - Raw review
+            with col1:
+                with st.container():
+                    # Basic metadata
+                    meta_cols = st.columns([1, 1, 2])
+                    meta_cols[0].caption(f"⭐ {row['rating']}")
+                    meta_cols[1].caption(f"👤 {row['user']}")
+                    meta_cols[2].caption(f"📅 {row['timestamp']}")
+                    
+                    # Raw text
+                    st.write(row['review_text'])
+            
+            # Right column - Processed review  
+            with col2:
+                with st.container():
+                    # Badge and confidence
+                    badge_col, conf_col = st.columns([1, 2])
+                    
+                    if row['label'] == 'valid':
+                        badge_col.success("✅ Valid")
+                    else:
+                        badge_col.error(f"🚫 {row['label'].title()}")
+                    
+                    conf_col.caption(f"Confidence: {row['top_conf']:.2f}")
+                    
+                    # Violations if any
+                    if row['violations']:
+                        st.warning(f"⚠️ Issues: {', '.join(row['violations'])}")
+                    
+                    # Highlighted text if spans exist
+                    if row['spans']:
+                        highlighted_html = render_html_with_spans(
+                            row['review_text'], 
+                            row['spans']
+                        )
+                        st.write(highlighted_html, unsafe_allow_html=True)
+                    else:
+                        st.write(row['review_text'])
+            
+            st.divider()
+    
+    with tab2:
+        st.header("📊 Classification Metrics")
+        
+        # Summary stats
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("Total Reviews", len(normalized_df))
+        col2.metric("Valid Reviews", len(normalized_df[normalized_df['label'] == 'valid']))
+        col3.metric("Flagged Reviews", len(normalized_df[normalized_df['is_violation'] == True]))
+        col4.metric("Flag Rate", f"{(len(normalized_df[normalized_df['is_violation'] == True]) / len(normalized_df) * 100):.1f}%")
+        
+        # Detailed breakdown
+        st.subheader("Detailed Breakdown")
+        breakdown_df = normalized_df['label'].value_counts().reset_index()
+        breakdown_df.columns = ['Label', 'Count']
+        breakdown_df['Percentage'] = (breakdown_df['Count'] / len(normalized_df) * 100).round(1)
+        st.dataframe(breakdown_df, width='stretch')
+    
+    with tab3:
+        st.header("💾 Export Live Results")
+        
+        # Filter for valid reviews only
+        clean_live_df = normalized_df[normalized_df['label'] == 'valid'].copy()
+        clean_live_df['reason'] = ""
+        
+        # Select columns for export
+        export_columns = ['review_text', 'rating', 'user', 'timestamp', 'place_name', 'top_conf', 'reason']
+        export_df = clean_live_df[export_columns]
+        
+        st.write(f"**Clean dataset contains {len(export_df)} valid reviews**")
+        st.dataframe(export_df.head(), width='stretch')
+        
+        # Download button
+        csv_data = export_df.to_csv(index=False)
+        st.download_button(
+            label=f"📥 Download {search_query.replace(' ', '_')}_reviews.csv",
+            data=csv_data,
+            file_name=f"{search_query.replace(' ', '_')}_reviews.csv",
+            mime="text/csv"
+        )
+
+def process_reviews_by_place(places_with_reviews, place_info, search_query, confidence_threshold, max_rows):
+    # Process organized by place
+    for place in places_with_reviews:
+        st.subheader(f"📍 {place['name']}")
+        
+        # Normalize the reviews DataFrame
+        normalized_df = normalize_df(place['reviews'].copy())
+        
+        # Limit to max_rows
+        if len(normalized_df) > max_rows:
+            normalized_df = normalized_df.head(max_rows)
+            st.info(f"Showing first {max_rows} reviews out of {len(place['reviews'])} total")
+        
+        # Run classification
+        with st.spinner("Classifying live reviews..."):
+            texts = normalized_df['review_text'].tolist()
+            predictions = cached_inference(texts)
+            
+            # Merge predictions
+            normalized_df['label'] = [pred['label'] for pred in predictions]
+            normalized_df['scores'] = [pred['scores'] for pred in predictions]
+            normalized_df['violations'] = [pred['violations'] for pred in predictions]
+            normalized_df['spans'] = [pred['spans'] for pred in predictions]
+            normalized_df['top_conf'] = [max(pred['scores'].values()) for pred in predictions]
+            normalized_df['is_violation'] = [
+                pred['label'] in ['ad', 'irrelevant', 'rant'] and 
+                max(pred['scores'].values()) >= confidence_threshold
+                for pred in predictions
+            ]
+        
+        st.success(f"✅ Processed {len(normalized_df)} live reviews")
+        
+        # Create tabs for results
+        tab1, tab2, tab3 = st.tabs(["📋 Review Feed", "📊 Metrics", "💾 Export"])
+        
+        with tab1:
+            # Show quick stats
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Total Reviews", len(normalized_df))
+            col2.metric("Valid Reviews", len(normalized_df[normalized_df['label'] == 'valid']))
+            col3.metric("Flagged Reviews", len(normalized_df[normalized_df['is_violation'] == True]))
+            
+            # Filter options
+            show_filter = st.radio(
+                "Show:",
+                ["All", "Valid only", "Violations only"],
+                horizontal=True
+            )
+            
+            # Filter dataframe based on selection
+            if show_filter == "Valid only":
+                filtered_df = normalized_df[normalized_df['label'] == 'valid']
+            elif show_filter == "Violations only":
+                filtered_df = normalized_df[normalized_df['is_violation'] == True]
+            else:
+                filtered_df = normalized_df
+            
+            # Search bar
+            search_text = st.text_input("🔎 Search reviews", key="live_search_filter")
+            
+            # Apply text search filter if provided
+            if search_text:
+                filtered_df = filtered_df[
+                    filtered_df['review_text'].str.contains(
+                        search_text, 
+                        case=False, 
+                        na=False
+                    )
+                ]
+                if len(filtered_df) == 0:
+                    st.info(f"No reviews found matching '{search_text}'")
+                else:
+                    st.info(f"Found {len(filtered_df)} reviews matching '{search_text}'")
+            
+            # Show sample of results
+            st.subheader("📋 Review Feed")
+            for idx, row in filtered_df.head(10).iterrows():
+                col1, col2 = st.columns(2)
+                
+                # Left column - Raw review
+                with col1:
+                    with st.container():
+                        # Basic metadata
+                        meta_cols = st.columns([1, 1, 2])
+                        meta_cols[0].caption(f"⭐ {row['rating']}")
+                        meta_cols[1].caption(f"👤 {row['user']}")
+                        meta_cols[2].caption(f"📅 {row['timestamp']}")
+                        
+                        # Raw text
+                        st.write(row['review_text'])
+                
+                # Right column - Processed review  
+                with col2:
+                    with st.container():
+                        # Badge and confidence
+                        badge_col, conf_col = st.columns([1, 2])
+                        
+                        if row['label'] == 'valid':
+                            badge_col.success("✅ Valid")
+                        else:
+                            badge_col.error(f"🚫 {row['label'].title()}")
+                        
+                        conf_col.caption(f"Confidence: {row['top_conf']:.2f}")
+                        
+                        # Violations if any
+                        if row['violations']:
+                            st.warning(f"⚠️ Issues: {', '.join(row['violations'])}")
+                        
+                        # Highlighted text if spans exist
+                        if row['spans']:
+                            highlighted_html = render_html_with_spans(
+                                row['review_text'], 
+                                row['spans']
+                            )
+                            st.write(highlighted_html, unsafe_allow_html=True)
+                        else:
+                            st.write(row['review_text'])
+                
+                st.divider()
+        
+        with tab2:
+            st.header("📊 Classification Metrics")
+            
+            # Summary stats
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("Total Reviews", len(normalized_df))
+            col2.metric("Valid Reviews", len(normalized_df[normalized_df['label'] == 'valid']))
+            col3.metric("Flagged Reviews", len(normalized_df[normalized_df['is_violation'] == True]))
+            col4.metric("Flag Rate", f"{(len(normalized_df[normalized_df['is_violation'] == True]) / len(normalized_df) * 100):.1f}%")
+            
+            # Detailed breakdown
+            st.subheader("Detailed Breakdown")
+            breakdown_df = normalized_df['label'].value_counts().reset_index()
+            breakdown_df.columns = ['Label', 'Count']
+            breakdown_df['Percentage'] = (breakdown_df['Count'] / len(normalized_df) * 100).round(1)
+            st.dataframe(breakdown_df, width='stretch')
+        
+        with tab3:
+            st.header("💾 Export Live Results")
+            
+            # Filter for valid reviews only
+            clean_live_df = normalized_df[normalized_df['label'] == 'valid'].copy()
+            clean_live_df['reason'] = ""
+            
+            # Select columns for export
+            export_columns = ['review_text', 'rating', 'user', 'timestamp', 'place_name', 'top_conf', 'reason']
+            export_df = clean_live_df[export_columns]
+            
+            st.write(f"**Clean dataset contains {len(export_df)} valid reviews**")
+            st.dataframe(export_df.head(), width='stretch')
+            
+            # Download button
+            csv_data = export_df.to_csv(index=False)
+            st.download_button(
+                label=f"📥 Download {search_query.replace(' ', '_')}_reviews.csv",
+                data=csv_data,
+                file_name=f"{search_query.replace(' ', '_')}_reviews.csv",
+                mime="text/csv"
+            )
 
 if __name__ == "__main__":
     main()

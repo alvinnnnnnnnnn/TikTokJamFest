@@ -40,18 +40,26 @@ class GooglePlacesClient:
         # Transform to match CSV format
         data = []
         for review in reviews:
+            # Convert timestamp to datetime for sorting
+            timestamp = review.get('time', 0)
+            date_str = datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d') if timestamp else 'Unknown'
+            
             data.append({
                 'review_text': review.get('text', ''),
                 'rating': review.get('rating', 0),
                 'user': review.get('author_name', 'Anonymous'),
-                'timestamp': datetime.fromtimestamp(
-                    review.get('time', 0)
-                ).strftime('%Y-%m-%d') if review.get('time') else 'Unknown'
+                'timestamp': date_str,
+                'review_timestamp': timestamp  # Keep raw timestamp for sorting
             })
         
         df = pd.DataFrame(data)
         # Filter out empty reviews
         df = df[df['review_text'].str.strip() != '']
+        
+        # Sort by recency (newest first)
+        if not df.empty and 'review_timestamp' in df.columns:
+            df = df.sort_values('review_timestamp', ascending=False)
+            df = df.drop('review_timestamp', axis=1)  # Remove helper column
         
         return df
     
@@ -87,3 +95,67 @@ class GooglePlacesClient:
             return combined_df, place_info
         else:
             return pd.DataFrame(), place_info
+    
+    def fetch_reviews_for_location(self, location_string, radius=5000, place_type="restaurant", max_places=5):
+        """Fetch reviews for places near a location"""
+        # Convert location string to coordinates
+        coordinates = self.geocode_location(location_string)
+        if not coordinates:
+            return {}, []
+        
+        # Search nearby places
+        places = self.search_nearby_places(coordinates, radius, place_type)
+        if not places:
+            return {}, []
+        
+        # Fetch reviews for each place (organized by place)
+        places_with_reviews = {}
+        place_info = []
+        
+        for place in places[:max_places]:
+            place_id = place['place_id']
+            place_name = place.get('name', 'Unknown')
+            
+            # Get place details including reviews
+            details = self.get_place_details(place_id)
+            
+            if details:
+                place_info.append({
+                    'name': place_name,
+                    'address': details.get('formatted_address', 'Unknown'),
+                    'rating': details.get('rating', 0),
+                    'place_id': place_id
+                })
+                
+                # Get reviews for this specific place
+                reviews_df = self.reviews_to_dataframe(details)
+                if not reviews_df.empty:
+                    reviews_df['place_name'] = place_name
+                    places_with_reviews[place_name] = reviews_df
+        
+        return places_with_reviews, place_info
+    
+    def search_nearby_places(self, location, radius=5000, place_type="restaurant"):
+        """Search for places near a specific location"""
+        try:
+            result = self.client.places_nearby(
+                location=location,
+                radius=radius,
+                type=place_type
+            )
+            return result.get('results', [])
+        except Exception as e:
+            st.error(f"Nearby places search failed: {str(e)}")
+            return []
+    
+    def geocode_location(self, location_string):
+        """Convert location string to coordinates"""
+        try:
+            result = self.client.geocode(location_string)
+            if result:
+                location = result[0]['geometry']['location']
+                return (location['lat'], location['lng'])
+            return None
+        except Exception as e:
+            st.error(f"Geocoding failed: {str(e)}")
+            return None
