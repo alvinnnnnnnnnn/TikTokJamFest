@@ -138,6 +138,61 @@ class GooglePlacesClient:
         
         return places_with_reviews, place_info
     
+    def fetch_reviews_for_query_and_location(self, query, user_coordinates, place_type="restaurant", max_places=5):
+        """Search for places using query near user's location - combines relevance with proximity"""
+        try:
+            # Search using query with location bias for better results
+            result = self.client.places(
+                query=f"{query} near me",
+                location=user_coordinates,
+                radius=5000,
+                type=place_type
+            )
+            places = result.get('results', [])
+            
+            if not places:
+                return [], []
+            
+            # Debug info
+            st.info(f"🔍 Google Places API found {len(places)} places for '{query}'")
+            
+            # Fetch reviews for each place (organized by place)
+            places_with_reviews = []
+            place_info = []
+            
+            for place in places[:max_places]:
+                place_id = place['place_id']
+                place_name = place.get('name', 'Unknown')
+                
+                # Get place details including reviews
+                details = self.get_place_details(place_id)
+                
+                if details:
+                    place_info.append({
+                        'name': place_name,
+                        'address': details.get('formatted_address', 'Unknown'),
+                        'rating': details.get('rating', 0),
+                        'place_id': place_id
+                    })
+                    
+                    # Get reviews for this specific place
+                    reviews_df = self.reviews_to_dataframe(details)
+                    if not reviews_df.empty:
+                        reviews_df['place_name'] = place_name
+                        places_with_reviews.append({
+                            'name': place_name,
+                            'reviews': reviews_df
+                        })
+            
+            # Debug info
+            st.success(f"✅ Returning {len(places_with_reviews)} places with reviews (from {len(places)} total found)")
+            
+            return places_with_reviews, place_info
+            
+        except Exception as e:
+            st.error(f"Search failed: {str(e)}")
+            return [], []
+    
     def search_nearby_places(self, location, radius=5000, place_type="restaurant"):
         """Search for places near a specific location"""
         try:

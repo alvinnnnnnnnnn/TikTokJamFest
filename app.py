@@ -7,6 +7,7 @@ from utils.schema import normalize_df
 from models.local_infer import infer_batch
 from utils.highlight import render_html_with_spans
 from utils.places_api import GooglePlacesClient
+import requests
 
 # Load environment variables
 load_dotenv()
@@ -139,7 +140,8 @@ def business_mode(uploaded_file, confidence_threshold, max_rows):
                 show_filter = st.radio(
                     "Show:",
                     ["All", "Valid only", "Violations only"],
-                    horizontal=True
+                    horizontal=True,
+                    key="business_filter"
                 )
                 
                 # Filter dataframe based on selection
@@ -344,17 +346,6 @@ def live_search_mode(google_api_key, confidence_threshold, max_rows):
         # Location search input
         col1, col2 = st.columns([3, 1])
         with col1:
-            search_query = st.text_input(
-                "📍 Search near location:",
-                placeholder="e.g., 'Manhattan, NY', '123 Main St, Boston'",
-                key="location_search"
-            )
-            place_type = st.selectbox(
-                "Place type:",
-                ["restaurant", "cafe", "bar", "bakery", "meal_takeaway", "food"],
-                help="Type of places to search for near the location"
-            )
-            
             # Add geolocation button
             col_geo1, col_geo2 = st.columns([1, 2])
             with col_geo1:
@@ -362,125 +353,76 @@ def live_search_mode(google_api_key, confidence_threshold, max_rows):
             with col_geo2:
                 st.caption("Click to automatically detect your current location")
                 
-            # JavaScript for geolocation
+            # Get user's IP address
             if use_current_location:
-                geolocation_html = """
-                <script>
-                function getCurrentLocation() {
-                    if (navigator.geolocation) {
-                        navigator.geolocation.getCurrentPosition(
-                            function(position) {
-                                const lat = position.coords.latitude;
-                                const lng = position.coords.longitude;
-                                
-                                // Store coordinates in session state via a hidden form
-                                const form = document.createElement('form');
-                                form.method = 'post';
-                                form.style.display = 'none';
-                                
-                                const latInput = document.createElement('input');
-                                latInput.type = 'hidden';
-                                latInput.name = 'user_lat';
-                                latInput.value = lat;
-                                
-                                const lngInput = document.createElement('input');
-                                lngInput.type = 'hidden';
-                                lngInput.name = 'user_lng';
-                                lngInput.value = lng;
-                                
-                                form.appendChild(latInput);
-                                form.appendChild(lngInput);
-                                document.body.appendChild(form);
-                                
-                                // Display success message
-                                alert(`Location detected: ${lat.toFixed(4)}, ${lng.toFixed(4)}`);
-                                
-                                // Trigger Streamlit rerun by clicking a hidden button
-                                const rerunEvent = new CustomEvent('streamlit:rerun');
-                                window.parent.document.dispatchEvent(rerunEvent);
-                            },
-                            function(error) {
-                                let message = 'Location access denied. ';
-                                switch(error.code) {
-                                    case error.PERMISSION_DENIED:
-                                        message += 'Please enable location access and try again.';
-                                        break;
-                                    case error.POSITION_UNAVAILABLE:
-                                        message += 'Location information unavailable.';
-                                        break;
-                                    case error.TIMEOUT:
-                                        message += 'Location request timed out.';
-                                        break;
-                                }
-                                alert(message);
-                            }
-                        );
-                    } else {
-                        alert('Geolocation is not supported by this browser.');
-                    }
-                }
-                
-                // Auto-trigger on load
-                getCurrentLocation();
-                </script>
-                """
-                
-                st.components.v1.html(geolocation_html, height=0)
-                
-                # Check if we have coordinates in query params or session state
-                query_params = st.query_params
-                if 'user_lat' in query_params and 'user_lng' in query_params:
-                    user_lat = float(query_params['user_lat'])
-                    user_lng = float(query_params['user_lng'])
-                    
-                    # Reverse geocode to get address
-                    places_client = GooglePlacesClient(google_api_key)
-                    try:
-                        # Use Google's reverse geocoding
-                        result = places_client.client.reverse_geocode((user_lat, user_lng))
-                        if result:
-                            formatted_address = result[0]['formatted_address']
-                            st.success(f"📍 Current location detected: {formatted_address}")
-                            # Update the search query with detected location
-                            st.session_state.location_search = formatted_address
+                try:
+                    with st.spinner("🔄 Detecting your location..."):
+                        # Get location from IP address using a free geolocation API
+                        response = requests.get("http://ip-api.com/json/", timeout=5)
+                        data = response.json()
+                        
+                        if data['status'] == 'success':
+                            user_lat = data['lat']
+                            user_lng = data['lon']
+                            city = data.get('city', 'Unknown')
+                            country = data.get('country', 'Unknown')
+                            
+                            # Store coordinates in session state
+                            st.session_state.user_lat = user_lat
+                            st.session_state.user_lng = user_lng
+                            st.session_state.location_enabled = True
+                            st.session_state.user_location = f"{city}, {country}"
+                            
+                            st.success(f"📍 Location detected: {city}, {country} ({user_lat:.4f}, {user_lng:.4f})")
                             st.rerun()
-                    except Exception as e:
-                        # Fallback: use coordinates directly if geocoding fails
-                        coordinates_string = f"{user_lat:.4f}, {user_lng:.4f}"
-                        st.info(f"📍 Using coordinates: {coordinates_string}")
-                        st.session_state.location_search = coordinates_string
-                        # Clear the error and continue with coordinates
-                        if "REQUEST_DENIED" in str(e):
-                            st.warning("💡 **Tip:** Enable Geocoding API in Google Cloud Console for address names")
-                        st.rerun()
-        
+                        else:
+                            st.error("Could not detect location from IP address")
+                            
+                except Exception as e:
+                    st.error(f"Error detecting location: {str(e)}")
+                
         with col2:
-            search_button = st.button("🔍 Search", type="primary")
+            # Only show search button if location is enabled and query is provided
+            if st.session_state.get('location_enabled', False):
+                search_query = st.text_input(
+                    "🔍 Search for places near you:",
+                    placeholder="e.g., 'Italian restaurants', 'coffee shops', 'pizza'",
+                    key="search_query"
+                )
+                place_type = st.selectbox(
+                    "Place type:",
+                    ["restaurant", "cafe", "bar", "bakery", "meal_takeaway", "food"],
+                    help="Type of places to search for"
+                )
+                
+                search_button = st.button("🔍 Search", type="primary")
+            else:
+                search_button = st.button("🔍 Search", type="primary", disabled=True)
         
-        if search_button and search_query:
+        if search_button and st.session_state.get('location_enabled', False):
             try:
-                with st.spinner("Fetching reviews from Google Places..."):
+                with st.spinner("Finding relevant places near you..."):
                     # Initialize Places client
                     places_client = GooglePlacesClient(google_api_key)
                     
-                    places_with_reviews, place_info = places_client.fetch_reviews_for_location(
+                    # Use combined search: user location + search query for better results
+                    places_with_reviews, place_info = places_client.fetch_reviews_for_query_and_location(
                         search_query,
-                        radius=5000,
+                        (st.session_state.user_lat, st.session_state.user_lng),
                         place_type=place_type,
                         max_places=5
                     )
                     
                     if not places_with_reviews:
-                        st.warning(f"No places found near '{search_query}'. Try a different location.")
+                        st.warning(f"No '{search_query}' places found near your location. Try a different search term.")
                     else:
                         # Process organized by place
-                        process_reviews_by_place(places_with_reviews, place_info, search_query, confidence_threshold, max_rows)
-                        
+                        process_reviews_by_place(places_with_reviews, place_info, f"{search_query} near you", confidence_threshold, max_rows)
             except Exception as e:
                 st.error(f"Error fetching live reviews: {str(e)}")
         
         # Show usage instructions when not searching
-        if not (search_button and search_query):
+        if not search_button:
             with st.expander("ℹ️ How to use Live Search"):
                 st.write("""
                 **Search Tips:**
@@ -527,9 +469,9 @@ def process_combined_reviews(reviews_df, place_info, search_query, confidence_th
     st.success(f"✅ Processed {len(normalized_df)} live reviews")
     
     # Create tabs for results
-    tab1, tab2, tab3 = st.tabs(["📋 Review Feed", "📊 Metrics", "💾 Export"])
+    tab1 = st.tabs(["📋 Review Feed"])
     
-    with tab1:
+    with tab1[0]:
         # Show quick stats
         col1, col2, col3 = st.columns(3)
         col1.metric("Total Reviews", len(normalized_df))
@@ -540,7 +482,8 @@ def process_combined_reviews(reviews_df, place_info, search_query, confidence_th
         show_filter = st.radio(
             "Show:",
             ["All", "Valid only", "Violations only"],
-            horizontal=True
+            horizontal=True,
+            key="live_filter"
         )
         
         # Filter dataframe based on selection
@@ -613,50 +556,10 @@ def process_combined_reviews(reviews_df, place_info, search_query, confidence_th
                         st.write(row['review_text'])
             
             st.divider()
-    
-    with tab2:
-        st.header("📊 Classification Metrics")
-        
-        # Summary stats
-        col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Total Reviews", len(normalized_df))
-        col2.metric("Valid Reviews", len(normalized_df[normalized_df['label'] == 'valid']))
-        col3.metric("Flagged Reviews", len(normalized_df[normalized_df['is_violation'] == True]))
-        col4.metric("Flag Rate", f"{(len(normalized_df[normalized_df['is_violation'] == True]) / len(normalized_df) * 100):.1f}%")
-        
-        # Detailed breakdown
-        st.subheader("Detailed Breakdown")
-        breakdown_df = normalized_df['label'].value_counts().reset_index()
-        breakdown_df.columns = ['Label', 'Count']
-        breakdown_df['Percentage'] = (breakdown_df['Count'] / len(normalized_df) * 100).round(1)
-        st.dataframe(breakdown_df, width='stretch')
-    
-    with tab3:
-        st.header("💾 Export Live Results")
-        
-        # Filter for valid reviews only
-        clean_live_df = normalized_df[normalized_df['label'] == 'valid'].copy()
-        clean_live_df['reason'] = ""
-        
-        # Select columns for export
-        export_columns = ['review_text', 'rating', 'user', 'timestamp', 'place_name', 'top_conf', 'reason']
-        export_df = clean_live_df[export_columns]
-        
-        st.write(f"**Clean dataset contains {len(export_df)} valid reviews**")
-        st.dataframe(export_df.head(), width='stretch')
-        
-        # Download button
-        csv_data = export_df.to_csv(index=False)
-        st.download_button(
-            label=f"📥 Download {search_query.replace(' ', '_')}_reviews.csv",
-            data=csv_data,
-            file_name=f"{search_query.replace(' ', '_')}_reviews.csv",
-            mime="text/csv"
-        )
 
 def process_reviews_by_place(places_with_reviews, place_info, search_query, confidence_threshold, max_rows):
     # Process organized by place
-    for place in places_with_reviews:
+    for idx, place in enumerate(places_with_reviews):
         st.subheader(f"📍 {place['name']}")
         
         # Normalize the reviews DataFrame
@@ -687,9 +590,9 @@ def process_reviews_by_place(places_with_reviews, place_info, search_query, conf
         st.success(f"✅ Processed {len(normalized_df)} live reviews")
         
         # Create tabs for results
-        tab1, tab2, tab3 = st.tabs(["📋 Review Feed", "📊 Metrics", "💾 Export"])
+        tab1 = st.tabs(["📋 Review Feed"])
         
-        with tab1:
+        with tab1[0]:
             # Show quick stats
             col1, col2, col3 = st.columns(3)
             col1.metric("Total Reviews", len(normalized_df))
@@ -700,7 +603,8 @@ def process_reviews_by_place(places_with_reviews, place_info, search_query, conf
             show_filter = st.radio(
                 "Show:",
                 ["All", "Valid only", "Violations only"],
-                horizontal=True
+                horizontal=True,
+                key=f"place_filter_{idx}"
             )
             
             # Filter dataframe based on selection
@@ -712,7 +616,7 @@ def process_reviews_by_place(places_with_reviews, place_info, search_query, conf
                 filtered_df = normalized_df
             
             # Search bar
-            search_text = st.text_input("🔎 Search reviews", key="live_search_filter")
+            search_text = st.text_input("🔎 Search reviews", key=f"live_search_filter_{idx}")
             
             # Apply text search filter if provided
             if search_text:
@@ -773,46 +677,6 @@ def process_reviews_by_place(places_with_reviews, place_info, search_query, conf
                             st.write(row['review_text'])
                 
                 st.divider()
-        
-        with tab2:
-            st.header("📊 Classification Metrics")
-            
-            # Summary stats
-            col1, col2, col3, col4 = st.columns(4)
-            col1.metric("Total Reviews", len(normalized_df))
-            col2.metric("Valid Reviews", len(normalized_df[normalized_df['label'] == 'valid']))
-            col3.metric("Flagged Reviews", len(normalized_df[normalized_df['is_violation'] == True]))
-            col4.metric("Flag Rate", f"{(len(normalized_df[normalized_df['is_violation'] == True]) / len(normalized_df) * 100):.1f}%")
-            
-            # Detailed breakdown
-            st.subheader("Detailed Breakdown")
-            breakdown_df = normalized_df['label'].value_counts().reset_index()
-            breakdown_df.columns = ['Label', 'Count']
-            breakdown_df['Percentage'] = (breakdown_df['Count'] / len(normalized_df) * 100).round(1)
-            st.dataframe(breakdown_df, width='stretch')
-        
-        with tab3:
-            st.header("💾 Export Live Results")
-            
-            # Filter for valid reviews only
-            clean_live_df = normalized_df[normalized_df['label'] == 'valid'].copy()
-            clean_live_df['reason'] = ""
-            
-            # Select columns for export
-            export_columns = ['review_text', 'rating', 'user', 'timestamp', 'place_name', 'top_conf', 'reason']
-            export_df = clean_live_df[export_columns]
-            
-            st.write(f"**Clean dataset contains {len(export_df)} valid reviews**")
-            st.dataframe(export_df.head(), width='stretch')
-            
-            # Download button
-            csv_data = export_df.to_csv(index=False)
-            st.download_button(
-                label=f"📥 Download {search_query.replace(' ', '_')}_reviews.csv",
-                data=csv_data,
-                file_name=f"{search_query.replace(' ', '_')}_reviews.csv",
-                mime="text/csv"
-            )
 
 if __name__ == "__main__":
     main()
