@@ -1,10 +1,15 @@
 import streamlit as st
 import pandas as pd
 import json
+import os
+from dotenv import load_dotenv
 from utils.schema import normalize_df
 from models.local_infer import infer_batch
 from utils.highlight import render_html_with_spans
 from utils.places_api import GooglePlacesClient
+
+# Load environment variables
+load_dotenv()
 
 @st.cache_data
 def cached_inference(texts):
@@ -18,6 +23,9 @@ def main():
     )
     st.title("🧹 Before → After: Trustworthy Review Feed")
     st.subheader("Clean and classify Google reviews with confidence")
+    
+    # Load Google API key from environment
+    google_api_key = os.getenv("GOOGLE_PLACES_API_KEY")
     
     # Top-level mode selection
     mode = st.selectbox(
@@ -60,16 +68,11 @@ def main():
             )
         else:
             st.subheader("🌍 Live Search Settings")
-            google_api_key = st.text_input(
-                "Google Places API Key",
-                type="password",
-                help="Required for live location search. Get from Google Cloud Console."
-            )
-            
             if google_api_key:
-                st.success("✅ API key configured")
+                st.success("✅ Google Places API configured")
             else:
-                st.warning("⚠️ API key required for live search")
+                st.error("❌ Google Places API key not found in environment")
+                st.info("Please ensure GOOGLE_PLACES_API_KEY is set in .env file")
         
         # Local Model Documentation
         with st.expander("🔧 Local Model Format"):
